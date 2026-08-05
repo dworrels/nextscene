@@ -1,13 +1,30 @@
-export default function Home() {
-  return (
-    <main className="grid min-h-screen place-items-center p-8">
-      <div className="max-w-xl text-center">
-        <p className="text-sm font-semibold tracking-[0.2em] text-sky-600">NEXTSCENE</p>
-        <h1 className="mt-4 text-5xl font-bold tracking-tight">Your movie taste, made useful.</h1>
-        <p className="mt-5 text-lg text-zinc-600 dark:text-zinc-300">
-          The Next.js foundation is ready for your personalized recommendation engine.
-        </p>
-      </div>
-    </main>
-  );
+import Link from "next/link";
+import { CatalogError } from "@/components/catalog-state";
+import { Mark } from "@/components/icons";
+import { MovieHero } from "@/components/movie-hero";
+import { MovieRail } from "@/components/movie-rail";
+import { ReleaseTracker } from "@/components/release-tracker";
+import { SiteHeader } from "@/components/site-header";
+import { TasteProfile } from "@/components/taste-profile";
+import { getMovieCatalog } from "@/lib/tmdb";
+
+export const revalidate = 3600;
+
+export default async function Home() {
+  const catalog = await getMovieCatalog().catch(() => null);
+
+  return <main>
+    <SiteHeader />
+    {catalog ? <>
+      <MovieHero movie={catalog.featured} />
+      <MovieRail movies={catalog.recommendations} />
+      <TasteProfile />
+      <ReleaseTracker movies={catalog.releases} />
+    </> : <CatalogError />}
+    <footer className="page-width grid min-h-[155px] max-[760px]:min-h-[180px] grid-cols-[auto_1fr_auto] max-[760px]:grid-cols-1 items-start gap-[30px] max-[760px]:gap-2 border-t border-line pt-[42px] pb-6">
+      <Link className="inline-flex items-center gap-[7px] whitespace-nowrap text-base font-semibold tracking-[-0.02em]" href="/"><Mark /> <span>NextScene</span></Link>
+      <p className="mt-[3px] text-[11px] text-muted">Personal recommendations, considered.</p>
+      <p className="mt-[3px] max-[760px]:mt-3 max-w-[250px] text-[10px] leading-[1.4] text-right text-muted max-[760px]:text-left">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+    </footer>
+  </main>;
 }

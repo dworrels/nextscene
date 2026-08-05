@@ -9,7 +9,11 @@
 /build
 
 # local environment files
-.env*
+.env
+.env.local
+
+# imported user data (file-backed, single-user scaffold)
+/data/
 
 # TypeScript
 *.tsbuildinfo
