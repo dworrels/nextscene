@@ -9,6 +9,6 @@ export function Mark() {
 }
 
 export function Arrow({ direction = "right" }: { direction?: "left" | "right" }) {
-  const iconProps = { className: "h-[15px] w-[15px]", strokeWidth: 1.8, "aria-hidden": true } as const;
+  const iconProps = { className: "inline-block h-[20px] w-[20px] align-middle", strokeWidth: 2.5, "aria-hidden": true } as const;
   return direction === "right" ? <ChevronRight {...iconProps} /> : <ChevronLeft {...iconProps} />;
 }

@@ -1,10 +1,12 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
-import { findMovieByImdbId } from "@/lib/tmdb";
+import { findMovieByImdbId, findTvByImdbId } from "@/lib/tmdb";
+import type { MediaType } from "@/types/tmdb";
 
 export type RatingRow = {
   imdbId: string;
   tmdbId: number | null;
+  mediaType: MediaType;
   rating: number;
   title: string;
   matchedAt: string | null;
@@ -73,6 +75,13 @@ function parseCsvLine(line: string): string[] {
 const IMDB_ID_COLUMN = 0;
 const RATING_COLUMN = 1;
 const TITLE_COLUMN = 3;
+const TITLE_TYPE_COLUMN = 5;
+
+// tvMovie rows live in TMDb's movie catalog, not its TV catalog, so only the
+// series-shaped title types should be matched against find/{imdb_id}'s tv_results.
+function mediaTypeFromTitleType(titleType: string): MediaType {
+  return titleType === "tvSeries" || titleType === "tvMiniSeries" ? "tv" : "movie";
+}
 
 async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length);
@@ -97,10 +106,12 @@ export async function importCsv(text: string): Promise<RatingRow[]> {
 
   return mapWithConcurrency(rows, 8, async (fields) => {
     const imdbId = fields[IMDB_ID_COLUMN];
-    const tmdbId = await findMovieByImdbId(imdbId).catch(() => null);
+    const mediaType = mediaTypeFromTitleType(fields[TITLE_TYPE_COLUMN] || "");
+    const tmdbId = await (mediaType === "tv" ? findTvByImdbId(imdbId) : findMovieByImdbId(imdbId)).catch(() => null);
     return {
       imdbId,
       tmdbId,
+      mediaType,
       rating: Number(fields[RATING_COLUMN]) || 0,
       title: fields[TITLE_COLUMN] || imdbId,
       matchedAt: tmdbId ? new Date().toISOString() : null,

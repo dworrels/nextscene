@@ -31,6 +31,8 @@ export async function TasteProfile() {
       {unmatched.length > 0 ? <div className="mt-6 flex flex-col gap-2">
         {unmatched.map((row) => <form className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-bg px-3 py-2" action={repairRowAction} key={row.imdbId}>
           <input type="hidden" name="imdbId" value={row.imdbId} />
+          <input type="hidden" name="mediaType" value={row.mediaType} />
+          <span className="rounded-full bg-soft px-2 py-0.5 text-[10px] font-semibold uppercase text-muted">{row.mediaType}</span>
           <span className="flex-1 truncate text-sm text-ink">{row.title}</span>
           <input className="w-40 rounded-md border border-line bg-soft px-2 py-1 text-xs text-ink" name="query" placeholder="TMDb ID or title" type="text" />
           <button className="rounded-md bg-ink px-3 py-1 text-xs font-semibold text-bg" type="submit">Fix</button>

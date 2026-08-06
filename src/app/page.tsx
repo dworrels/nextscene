@@ -6,18 +6,26 @@ import { MovieRail } from "@/components/movie-rail";
 import { ReleaseTracker } from "@/components/release-tracker";
 import { SiteHeader } from "@/components/site-header";
 import { TasteProfile } from "@/components/taste-profile";
-import { getMovieCatalog } from "@/lib/tmdb";
+import { getMovieCatalog, getPopularTvShows, getTopRatedMovies, getTopRatedTvShows } from "@/lib/tmdb";
 
 export const revalidate = 3600;
 
 export default async function Home() {
-  const catalog = await getMovieCatalog().catch(() => null);
+  const [catalog, popularTv, topRatedMovies, topRatedTv] = await Promise.all([
+    getMovieCatalog().catch(() => null),
+    getPopularTvShows().catch(() => null),
+    getTopRatedMovies().catch(() => null),
+    getTopRatedTvShows().catch(() => null),
+  ]);
 
   return <main>
     <SiteHeader />
     {catalog ? <>
       <MovieHero movie={catalog.featured} />
-      <MovieRail movies={catalog.recommendations} />
+      <MovieRail title="Popular Movies" items={catalog.recommendations} href="/browse/popular-movies" />
+      <MovieRail title="Popular TV Shows" items={popularTv?.items ?? []} href="/browse/popular-tv" />
+      <MovieRail title="Top Rated Movies" items={topRatedMovies?.items ?? []} href="/browse/top-rated-movies" />
+      <MovieRail title="Top Rated TV Shows" items={topRatedTv?.items ?? []} href="/browse/top-rated-tv" />
       <TasteProfile />
       <ReleaseTracker movies={catalog.releases} />
     </> : <CatalogError />}
