@@ -7,10 +7,20 @@ export type MediaItem = {
   overview: string;
   releaseDate: string;
   year: string;
-  posterUrl: string;
+  posterUrl: string | null;
   backdropUrl: string | null;
   genre: string;
   audienceScore: number;
+  originalLanguageCode?: string | null;
+  genres?: string[];
+  runtimeMinutes?: number | null;
+  people?: string[];
+  keywords?: string[];
+  originCountryCodes?: string[];
+  networkNames?: string[];
+  certificationCode?: string | null;
+  seasonCount?: number | null;
+  episodeCount?: number | null;
 };
 
 export type PagedResult<T> = {

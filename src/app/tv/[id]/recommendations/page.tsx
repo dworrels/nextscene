@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { BackButton } from "@/components/back-button";
+import { CatalogError } from "@/components/catalog-state";
 import { PaginatedGrid } from "@/components/paginated-grid";
 import { SiteHeader } from "@/components/site-header";
-import { loadTvRecommendations } from "@/lib/browse-actions";
-import { getTvShowName } from "@/lib/tmdb";
+import { getInitialTvRecommendations, loadTvRecommendations } from "@/lib/browse-actions";
+import { getTvShowName, isTmdbNotFound } from "@/lib/tmdb";
 
 export const revalidate = 3600;
 
@@ -30,21 +30,33 @@ export default async function TvRecommendationsPage({ params }: { params: Promis
   const showId = parseShowId(id);
   if (!showId) notFound();
 
-  const [title, items] = await Promise.all([
-    getTvShowName(showId).catch(() => notFound()),
-    loadTvRecommendations(showId, 1),
+  const [titleResult, itemsResult] = await Promise.allSettled([
+    getTvShowName(showId),
+    getInitialTvRecommendations(showId),
   ]);
+
+  if (titleResult.status === "rejected") {
+    if (isTmdbNotFound(titleResult.reason)) notFound();
+    return <main className="pb-24"><SiteHeader /><CatalogError /></main>;
+  }
+
+  const title = titleResult.value;
+  const items = itemsResult.status === "fulfilled" ? itemsResult.value : null;
 
   return <main className="pb-24">
     <SiteHeader />
     <section className="page-width pt-[84px] max-[760px]:pt-11 pb-10">
-      <Link className="mb-4 inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink" href={`/tv/${showId}`}><ArrowLeft className="h-[15px] w-[15px]" strokeWidth={1.8} aria-hidden="true" /> Back to {title}</Link>
+      <BackButton className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-soft text-ink hover:bg-line" fallbackHref={`/tv/${showId}`} ariaLabel={`Back to ${title}`} />
       <h1 className="m-0 text-[clamp(36px,5vw,60px)] font-bold leading-[0.98] tracking-[-0.02em]">Related</h1>
       <p className="mt-3 text-lg font-medium text-muted">{title}</p>
     </section>
 
     <section className="page-width">
-      <PaginatedGrid initialPage={items} loadMore={loadTvRecommendations.bind(null, showId)} />
+      {items === null
+        ? <CatalogError />
+        : items.items.length > 0
+          ? <PaginatedGrid initialPage={items} loadMore={loadTvRecommendations.bind(null, showId)} />
+          : <p className="text-sm text-muted">No related titles found.</p>}
     </section>
   </main>;
 }

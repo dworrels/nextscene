@@ -1,14 +1,12 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { BackButton } from "@/components/back-button";
+import { CatalogError } from "@/components/catalog-state";
 import { SiteHeader } from "@/components/site-header";
-import { getEpisodeDetails } from "@/lib/tmdb";
+import { formatFullDate } from "@/lib/format";
+import { getEpisodeDetails, isTmdbNotFound } from "@/lib/tmdb";
 
 export const revalidate = 3600;
-
-function formatFullDate(date: string) {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00`));
-}
 
 function parseRouteParams(id: string, season: string, episode: string) {
   const showId = Number(id);
@@ -42,7 +40,13 @@ export default async function EpisodePage({ params }: { params: Promise<{ id: st
   const parsed = parseRouteParams(id, season, episode);
   if (!parsed) notFound();
 
-  const detail = await getEpisodeDetails(parsed.showId, parsed.seasonNumber, parsed.episodeNumber).catch(() => notFound());
+  const detail = await getEpisodeDetails(parsed.showId, parsed.seasonNumber, parsed.episodeNumber).catch((error: unknown) => {
+    if (isTmdbNotFound(error)) notFound();
+    return null;
+  });
+
+  if (!detail) return <main className="pb-24"><SiteHeader /><CatalogError /></main>;
+
   const metaParts = [
     detail.airDate ? formatFullDate(detail.airDate) : null,
     detail.runtime ? `${detail.runtime} min` : null,
@@ -55,12 +59,10 @@ export default async function EpisodePage({ params }: { params: Promise<{ id: st
     <article className="page-width relative isolate flex min-h-[440px] max-[760px]:min-h-[340px] items-end overflow-hidden rounded-[18px] max-[760px]:rounded-[11px] bg-[#111] text-white [clip-path:inset(0_round_18px)] max-[760px]:[clip-path:inset(0_round_11px)]">
       <div className="absolute inset-0 -z-[2] rounded-[18px] max-[760px]:rounded-[11px] bg-[#252725] bg-cover bg-center" style={{ backgroundImage: detail.stillUrl ? `url(${detail.stillUrl})` : undefined }} />
       <div className="absolute inset-0 -z-[1] rounded-[18px] max-[760px]:rounded-[11px] bg-[linear-gradient(90deg,rgba(0,0,0,.85)_0%,rgba(0,0,0,.45)_45%,rgba(0,0,0,.05)_80%),linear-gradient(0deg,rgba(0,0,0,.75),transparent_60%)]" />
-      <a className="absolute left-10 top-8 max-[760px]:left-6 max-[760px]:top-6 inline-flex items-center gap-1.5 text-[13px] text-white/70 hover:text-white" href={`/tv/${parsed.showId}/season/${parsed.seasonNumber}`}>
-        <ArrowLeft className="h-[15px] w-[15px]" strokeWidth={1.8} aria-hidden="true" /> Back to {detail.showName} — Season {parsed.seasonNumber}
-      </a>
-      <div className="max-w-[620px] max-[760px]:max-w-none px-10 pb-10 max-[760px]:px-6 max-[760px]:pb-8">
-        <p className="m-0 text-sm font-medium text-white/70">{detail.showName} · Episode {detail.episodeNumber}</p>
-        <h1 className="m-0 mt-2 text-[clamp(32px,4.8vw,64px)] max-[760px]:text-[38px] font-bold leading-[1.02] tracking-[-0.02em] text-white">{detail.name}</h1>
+      <BackButton className="absolute left-10 top-8 max-[760px]:left-6 max-[760px]:top-6 inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20" fallbackHref={`/tv/${parsed.showId}/season/${parsed.seasonNumber}`} ariaLabel={`Back to ${detail.showName} — Season ${parsed.seasonNumber}`} />
+      <div className="max-w-[620px] max-[760px]:max-w-none px-10 pb-10 max-[760px]:px-6 max-[760px]:pb-8 max-[480px]:px-4">
+        <p className="m-0 text-sm font-medium text-white/85">{detail.showName} · Episode {detail.episodeNumber}</p>
+        <h1 className="m-0 mt-2 break-words text-[clamp(32px,4.8vw,64px)] max-[760px]:text-[38px] max-[480px]:text-[32px] font-bold leading-[1.02] tracking-[-0.02em] text-white">{detail.name}</h1>
       </div>
     </article>
 
@@ -80,7 +82,7 @@ export default async function EpisodePage({ params }: { params: Promise<{ id: st
         {detail.guestStars.map((member) => <div className="w-[100px] flex-none" key={member.id}>
           <div className="mb-2 aspect-[0.8] rounded-lg bg-soft bg-cover bg-center" style={{ backgroundImage: member.profileUrl ? `url(${member.profileUrl})` : undefined }} />
           <p className="m-0 truncate text-xs font-semibold text-ink">{member.name}</p>
-          <p className="m-0 truncate text-[11px] text-muted">{member.character}</p>
+          <p className="m-0 truncate text-xs text-muted">{member.character}</p>
         </div>)}
       </div>
     </section> : null}

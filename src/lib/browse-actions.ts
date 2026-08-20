@@ -14,10 +14,19 @@ import {
   getTvRecommendations,
   getUpcomingMovies,
 } from "@/lib/tmdb";
+import { prioritizeMediaItems, readContentPreferences } from "@/lib/content-preferences";
 import type { MediaItem, PagedResult } from "@/types/tmdb";
 
 function emptyPage(): PagedResult<MediaItem> {
   return { items: [], page: 1, totalPages: 1, totalResults: 0 };
+}
+
+async function loadInitialBatch(load: (page: number) => Promise<PagedResult<MediaItem>>): Promise<PagedResult<MediaItem>> {
+  const first = await load(1);
+  if (first.page >= first.totalPages) return first;
+  const second = await load(2);
+  const preferences = await readContentPreferences();
+  return { ...second, items: prioritizeMediaItems([...first.items, ...second.items], preferences) };
 }
 
 export async function browseCategory(key: string, page = 1): Promise<PagedResult<MediaItem>> {
@@ -34,12 +43,24 @@ export async function browseCategory(key: string, page = 1): Promise<PagedResult
   }
 }
 
+export async function getInitialBrowseCategory(key: string): Promise<PagedResult<MediaItem>> {
+  return loadInitialBatch((page) => browseCategory(key, page));
+}
+
 export async function loadMovieRecommendations(movieId: number, page: number): Promise<PagedResult<MediaItem>> {
   return getMovieRecommendations(movieId, page);
 }
 
+export async function getInitialMovieRecommendations(movieId: number): Promise<PagedResult<MediaItem>> {
+  return loadInitialBatch((page) => loadMovieRecommendations(movieId, page));
+}
+
 export async function loadTvRecommendations(showId: number, page: number): Promise<PagedResult<MediaItem>> {
   return getTvRecommendations(showId, page);
+}
+
+export async function getInitialTvRecommendations(showId: number): Promise<PagedResult<MediaItem>> {
+  return loadInitialBatch((page) => loadTvRecommendations(showId, page));
 }
 
 export async function searchMediaPage(query: string, page = 1): Promise<PagedResult<MediaItem>> {
@@ -51,10 +72,15 @@ export async function searchMediaPage(query: string, page = 1): Promise<PagedRes
     getSearchTv(trimmed, page).catch(() => emptyPage()),
   ]);
 
+  const preferences = await readContentPreferences();
   return {
-    items: [...movies.items, ...shows.items].sort((a, b) => b.audienceScore - a.audienceScore),
+    items: prioritizeMediaItems([...movies.items, ...shows.items].sort((a, b) => b.audienceScore - a.audienceScore), preferences),
     page,
     totalPages: Math.max(movies.totalPages, shows.totalPages),
     totalResults: movies.totalResults + shows.totalResults,
   };
+}
+
+export async function getInitialSearchMedia(query: string): Promise<PagedResult<MediaItem>> {
+  return loadInitialBatch((page) => searchMediaPage(query, page));
 }

@@ -1,14 +1,13 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import Link from "next/link";
+import { BackButton } from "@/components/back-button";
+import { CatalogError } from "@/components/catalog-state";
 import { SiteHeader } from "@/components/site-header";
-import { getSeasonDetails } from "@/lib/tmdb";
+import { formatFullDate } from "@/lib/format";
+import { getSeasonDetails, isTmdbNotFound } from "@/lib/tmdb";
 
 export const revalidate = 3600;
-
-function formatFullDate(date: string) {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00`));
-}
 
 function parseRouteParams(id: string, season: string) {
   const showId = Number(id);
@@ -33,14 +32,17 @@ export default async function SeasonPage({ params }: { params: Promise<{ id: str
   const parsed = parseRouteParams(id, season);
   if (!parsed) notFound();
 
-  const seasonDetail = await getSeasonDetails(parsed.showId, parsed.seasonNumber).catch(() => notFound());
+  const seasonDetail = await getSeasonDetails(parsed.showId, parsed.seasonNumber).catch((error: unknown) => {
+    if (isTmdbNotFound(error)) notFound();
+    return null;
+  });
+
+  if (!seasonDetail) return <main className="pb-24"><SiteHeader /><CatalogError /></main>;
 
   return <main className="pb-24">
     <SiteHeader />
     <section className="page-width pt-[84px] max-[760px]:pt-11 pb-[38px] max-[760px]:pb-[25px]">
-      <a className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink" href={`/tv/${parsed.showId}`}>
-        <ArrowLeft className="h-[15px] w-[15px]" strokeWidth={1.8} aria-hidden="true" /> Back to {seasonDetail.showName}
-      </a>
+      <BackButton className="mb-6 inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-soft text-ink hover:bg-line" fallbackHref={`/tv/${parsed.showId}`} ariaLabel={`Back to ${seasonDetail.showName}`} />
       <div className="flex gap-6 max-[760px]:flex-col">
         {seasonDetail.posterUrl ? <div className="aspect-[0.68] w-[180px] flex-none overflow-hidden rounded-xl bg-soft max-[760px]:w-[140px]">
           <div className="h-full w-full bg-cover bg-center" style={{ backgroundImage: `url(${seasonDetail.posterUrl})` }} />
@@ -55,8 +57,8 @@ export default async function SeasonPage({ params }: { params: Promise<{ id: str
     </section>
 
     <section className="page-width">
-      <div className="flex flex-col gap-3">
-        {seasonDetail.episodes.map((episode) => <a
+      {seasonDetail.episodes.length > 0 ? <div className="flex flex-col gap-3">
+        {seasonDetail.episodes.map((episode) => <Link
           className="group flex gap-4 rounded-xl border border-line p-3 transition-colors hover:bg-soft max-[760px]:flex-col"
           href={`/tv/${parsed.showId}/season/${parsed.seasonNumber}/episode/${episode.episodeNumber}`}
           key={episode.id}
@@ -72,8 +74,8 @@ export default async function SeasonPage({ params }: { params: Promise<{ id: str
             </p>
             {episode.overview ? <p className="mt-2 line-clamp-2 text-sm leading-[1.5] text-muted">{episode.overview}</p> : null}
           </div>
-        </a>)}
-      </div>
+        </Link>)}
+      </div> : <p className="text-sm text-muted">No episode information is available for this season yet.</p>}
     </section>
   </main>;
 }

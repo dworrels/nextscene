@@ -3,27 +3,61 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { Search, X } from "lucide-react";
 import { PaginatedGrid } from "@/components/paginated-grid";
-import { browseCategory, searchMediaPage } from "@/lib/browse-actions";
+import { browseCategory, getInitialBrowseCategory, searchMediaPage } from "@/lib/browse-actions";
 import { BROWSE_CATEGORIES } from "@/lib/browse-categories";
 import type { MediaItem, PagedResult } from "@/types/tmdb";
 
 type ResultsView = { key: string; page: PagedResult<MediaItem> };
 
+// Clicking a result navigates away entirely (this overlay lives inside the
+// per-page SiteHeader, not a shared layout), so hitting back remounts it
+// from scratch. Restoring the query from sessionStorage — SiteHeader does
+// the same for whether the overlay was open at all — means the search comes
+// back instead of starting empty. See SiteHeader's SEARCH_OPEN_KEY.
+const SEARCH_QUERY_KEY = "nextscene-search-query";
+
 export function SearchOverlay({ onClose }: { onClose: () => void }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => window.sessionStorage.getItem(SEARCH_QUERY_KEY) ?? "");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [resultsView, setResultsView] = useState<ResultsView | null>(null);
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     const frame = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      previouslyFocused?.focus();
+    };
   }, []);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
-    const handleKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>("button, a[href], input, iframe, [tabindex]:not([tabindex='-1'])");
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
     document.addEventListener("keydown", handleKey);
     return () => {
       document.body.style.overflow = "";
@@ -35,36 +69,42 @@ export function SearchOverlay({ onClose }: { onClose: () => void }) {
     const trimmed = query.trim();
     if (!trimmed) return;
 
+    const requestId = ++requestIdRef.current;
     const timeout = setTimeout(() => {
       startTransition(async () => {
         const page = await searchMediaPage(trimmed);
-        setResultsView({ key: `search:${trimmed}`, page });
+        if (requestId === requestIdRef.current) setResultsView({ key: `search:${trimmed}`, page });
       });
     }, 300);
     return () => clearTimeout(timeout);
   }, [query]);
 
   function handleQueryChange(value: string) {
+    requestIdRef.current++;
     setQuery(value);
+    if (value) window.sessionStorage.setItem(SEARCH_QUERY_KEY, value); else window.sessionStorage.removeItem(SEARCH_QUERY_KEY);
     setActiveCategory(null);
-    if (!value.trim()) setResultsView(null);
+    setResultsView(null);
   }
 
   function handleCategoryClick(key: string) {
+    const requestId = ++requestIdRef.current;
     setQuery("");
+    window.sessionStorage.removeItem(SEARCH_QUERY_KEY);
     setActiveCategory(key);
+    setResultsView(null);
     startTransition(async () => {
-      const page = await browseCategory(key);
-      setResultsView({ key: `category:${key}`, page });
+      const page = await getInitialBrowseCategory(key);
+      if (requestId === requestIdRef.current) setResultsView({ key: `category:${key}`, page });
     });
   }
 
   const showBrowse = !query.trim() && !activeCategory;
   const activeLabel = BROWSE_CATEGORIES.find((category) => category.key === activeCategory)?.label;
 
-  return <div className="fixed inset-0 z-[200] overflow-y-auto bg-bg" role="dialog" aria-modal="true">
-    <div className="page-width sticky top-0 z-10 flex items-center gap-4 bg-bg pb-4 pt-6">
-      <div className="flex flex-1 items-center gap-3 rounded-full border border-line bg-soft px-5 py-3">
+  return <div className="fixed inset-0 z-[200] overflow-y-auto bg-bg" role="dialog" aria-modal="true" aria-label="Search" ref={dialogRef}>
+    <div className="page-width sticky top-0 z-10 flex items-center gap-4 bg-bg pb-4 pt-[max(1.5rem,env(safe-area-inset-top))]">
+      <div className="flex flex-1 items-center gap-3 rounded-full border border-line bg-soft px-5 py-3 focus-within:border-ink">
         <Search className="h-4 w-4 flex-none text-muted" strokeWidth={1.8} aria-hidden="true" />
         <input
           className="w-full bg-transparent text-base text-ink placeholder:text-muted focus:outline-none"
