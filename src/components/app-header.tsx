@@ -3,7 +3,6 @@
 import { CircleUser, Moon, Search, Sun } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { Logo } from "@/components/icons";
 
 type Theme = "light" | "dark";
 
@@ -39,11 +38,12 @@ function ProfileMenu() {
     >
       <CircleUser className="h-6 w-6" strokeWidth={1.6} aria-hidden="true" />
     </button>
-    {open ? <div className="absolute left-1/2 top-[calc(100%+8px)] z-20 w-44 -translate-x-1/2 rounded-xl border border-line bg-bg p-1.5 shadow-[0_16px_32px_rgba(0,0,0,.16)]" role="menu">
-      <Link className="flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-ink hover:bg-soft" href="/what-to-watch" role="menuitem" onClick={() => setOpen(false)}>What to Watch</Link>
-      <Link className="flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-ink hover:bg-soft" href="/ratings" role="menuitem" onClick={() => setOpen(false)}>Ratings</Link>
-      <Link className="flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-ink hover:bg-soft" href="/watchlist" role="menuitem" onClick={() => setOpen(false)}>Watchlist</Link>
-      <Link className="flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-ink hover:bg-soft" href="/settings" role="menuitem" onClick={() => setOpen(false)}>Settings</Link>
+    {open ? <div className="absolute left-1/2 top-[calc(100%+10px)] z-20 w-60 -translate-x-1/2 rounded-2xl border border-line bg-bg p-2 shadow-[0_16px_32px_rgba(0,0,0,.16)]" role="menu">
+      <Link className="flex min-h-12 items-center rounded-xl px-4 py-3 text-base font-medium text-ink hover:bg-soft" href="/what-to-watch" role="menuitem" onClick={() => setOpen(false)}>What to Watch</Link>
+      <Link className="flex min-h-12 items-center rounded-xl px-4 py-3 text-base font-medium text-ink hover:bg-soft" href="/ratings" role="menuitem" onClick={() => setOpen(false)}>Ratings</Link>
+      <Link className="flex min-h-12 items-center rounded-xl px-4 py-3 text-base font-medium text-ink hover:bg-soft" href="/watchlist" role="menuitem" onClick={() => setOpen(false)}>Watchlist</Link>
+      <Link className="flex min-h-12 items-center rounded-xl px-4 py-3 text-base font-medium text-ink hover:bg-soft" href="/updates" role="menuitem" onClick={() => setOpen(false)}>Updates</Link>
+      <Link className="flex min-h-12 items-center rounded-xl px-4 py-3 text-base font-medium text-ink hover:bg-soft" href="/settings" role="menuitem" onClick={() => setOpen(false)}>Settings</Link>
     </div> : null}
   </div>;
 }
@@ -54,8 +54,7 @@ export function AppHeader({ theme, onThemeToggle, onSearchOpen, showSearch = tru
   return <div className="bg-bg">
     <header className="page-width grid h-16 grid-cols-[1fr_auto_1fr] items-center gap-2.5 max-[760px]:h-14 max-[480px]:gap-1.5">
       <div className="flex min-w-0 items-center">
-        <Link className="inline-flex flex-none items-center gap-2 whitespace-nowrap text-base font-semibold tracking-[-0.02em] text-ink" href="/" aria-label="NextScene home">
-          <Logo className="h-9 w-12 flex-none" />
+        <Link className="inline-flex flex-none items-center whitespace-nowrap text-base font-semibold tracking-[-0.02em] text-ink" href="/" aria-label="NextScene home">
           <span>NextScene</span>
         </Link>
       </div>

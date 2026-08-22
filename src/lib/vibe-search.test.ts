@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diversifyVibeResults, extractVibeGenres, type SemanticSearchResult } from "./vibe-search";
+import { diversifyVibeResults, extractVibeGenres, filterConfidentResults, type SemanticSearchResult } from "./vibe-search";
 
 function result(id: number, genre: string, similarity: number): SemanticSearchResult {
   return {
@@ -25,5 +25,11 @@ describe("vibe search helpers", () => {
     const diversified = diversifyVibeResults(results, 8, 6, 2);
     expect(diversified.slice(0, 6).filter((entry) => entry.item.genre === "Horror")).toHaveLength(2);
     expect(diversified.map((entry) => entry.item.id)).toEqual([1, 2, 4, 5, 6, 7, 3, 8]);
+  });
+
+  it("keeps a minimum ranked fallback when the strict similarity floor is too narrow", () => {
+    const results = [result(1, "Drama", 1), result(2, "Drama", 0.9), result(3, "Drama", 0.8), result(4, "Drama", 0.7)];
+    expect(filterConfidentResults(results)).toHaveLength(2);
+    expect(filterConfidentResults(results, 3).map((entry) => entry.item.id)).toEqual([1, 2, 3]);
   });
 });

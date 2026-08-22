@@ -13,7 +13,7 @@ function SubmitButton({ inWatchlist }: { inWatchlist: boolean }) {
 
   return <button
     aria-pressed={inWatchlist}
-    className={`inline-flex min-h-[46px] items-center gap-2 rounded-full border px-6 text-sm font-semibold backdrop-blur-sm disabled:opacity-60 ${
+    className={`inline-flex min-h-[46px] items-center justify-center gap-2 rounded-full border px-6 text-sm font-semibold backdrop-blur-sm disabled:opacity-60 max-[760px]:px-3 max-[760px]:text-xs max-[760px]:whitespace-normal ${
       inWatchlist ? "border-white/30 bg-white text-[#151513] hover:bg-white/90" : "border-white/30 bg-white/10 text-white hover:bg-white/20"
     }`}
     disabled={pending}

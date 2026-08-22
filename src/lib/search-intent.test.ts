@@ -9,11 +9,15 @@ describe("parseSearchIntent", () => {
   });
 
   it("resolves a referenced title from a \"like X\" phrase", () => {
-    expect(parseSearchIntent("something like Interstellar").referencedTitle).toBe("Interstellar");
+    expect(parseSearchIntent("something like Interstellar").referencedTitles).toEqual(["Interstellar"]);
   });
 
   it("cuts a referenced title at a trailing connector", () => {
-    expect(parseSearchIntent("like Interstellar but simpler").referencedTitle).toBe("Interstellar");
+    expect(parseSearchIntent("like Interstellar but simpler").referencedTitles).toEqual(["Interstellar"]);
+  });
+
+  it("supports two title references", () => {
+    expect(parseSearchIntent("more like Arrival and Interstellar").referencedTitles).toEqual(["Arrival", "Interstellar"]);
   });
 
   it("parses an hour-based runtime constraint", () => {
@@ -43,6 +47,32 @@ describe("parseSearchIntent", () => {
   it("detects a mentioned streaming service", () => {
     expect(parseSearchIntent("something on netflix").watchProvider).toEqual({ id: 8, name: "Netflix" });
     expect(parseSearchIntent("great shows on Hulu").watchProvider).toEqual({ id: 15, name: "Hulu" });
+    expect(parseSearchIntent("a movie included with Netflix").watchProvider).toEqual({ id: 8, name: "Netflix" });
+    expect(parseSearchIntent("anime on Crunchyroll").watchProvider).toEqual({ id: 283, name: "Crunchyroll" });
     expect(parseSearchIntent("a dark mystery").watchProvider).toBeNull();
+  });
+
+  it("parses positive genres, format, era, language, and country", () => {
+    const intent = parseSearchIntent("a Japanese sci-fi film from the 1990s");
+    expect(intent.mediaType).toBe("movie");
+    expect(intent.includedGenres.map((genre) => genre.label)).toEqual(["Sci-Fi"]);
+    expect(intent.dateRange).toEqual({ start: "1990-01-01", end: "1999-12-31", label: "1990s" });
+    expect(intent.originalLanguage).toMatchObject({ code: "ja" });
+    expect(intent.originCountry).toMatchObject({ code: "JP" });
+  });
+
+  it("parses family, intensity, and TV-shape constraints", () => {
+    const intent = parseSearchIntent("a family-friendly limited series, not too intense, under 10 episodes, finished");
+    expect(intent.familyFriendly).toBe(true);
+    expect(intent.lowIntensity).toBe(true);
+    expect(intent.excludedGenres.map((genre) => genre.label)).toEqual(["Horror", "Thriller"]);
+    expect(intent.tvType).toBe("miniseries");
+    expect(intent.maxEpisodes).toBe(10);
+    expect(intent.tvStatus).toMatchObject({ value: "3" });
+  });
+
+  it("parses actor and director names", () => {
+    expect(parseSearchIntent("a thriller directed by Christopher Nolan").person).toEqual({ name: "Christopher Nolan", role: "director" });
+    expect(parseSearchIntent("a movie with Tom Hanks").person).toEqual({ name: "Tom Hanks", role: "actor" });
   });
 });

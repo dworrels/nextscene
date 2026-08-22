@@ -72,7 +72,9 @@ type TmdbMovieDetail = TmdbMovie & {
   "watch/providers": TmdbWatchProvidersResponse;
   keywords: { keywords: Array<{ id: number; name: string }> };
   production_countries: Array<{ iso_3166_1: string; name: string }>;
+  belongs_to_collection: { id: number; name: string } | null;
 };
+type TmdbCollection = { id: number; name: string; parts: TmdbMovie[] };
 type TmdbMovieProfile = TmdbMovie & {
   runtime: number | null;
   genres: Array<{ id: number; name: string }>;
@@ -127,6 +129,7 @@ type TmdbTvDetail = TmdbTv & {
   networks: TmdbNetwork[];
   seasons: TmdbSeason[];
   keywords: { results: Array<{ id: number; name: string }> };
+  production_countries: Array<{ iso_3166_1: string; name: string }>;
 };
 type TmdbTvProfile = TmdbTv & {
   genres: Array<{ id: number; name: string }>;
@@ -220,7 +223,18 @@ function getConfig() {
   };
 }
 
-async function requestTmdbFromApi<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+const RATE_LIMIT_RETRIES = 2;
+const RATE_LIMIT_FALLBACK_DELAY_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// TMDb's rate limit is a short burst window, not a hard daily cap — a 429
+// clears within a second or two. Without a retry, a brief burst (e.g. many
+// concurrent detail fetches) turns into missing posters/cards across the
+// site instead of recovering on its own.
+async function requestTmdbFromApi<T>(path: string, params: Record<string, string> = {}, attempt = 0): Promise<T> {
   const { token, baseUrl, language } = getConfig();
   const url = new URL(`${baseUrl.replace(/\/$/, "")}/${path}`);
   url.searchParams.set("language", language);
@@ -230,6 +244,12 @@ async function requestTmdbFromApi<T>(path: string, params: Record<string, string
     headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
     next: { revalidate: REVALIDATE_SECONDS },
   });
+
+  if (response.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+    const retryAfterSeconds = Number(response.headers.get("retry-after"));
+    await sleep(retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : RATE_LIMIT_FALLBACK_DELAY_MS);
+    return requestTmdbFromApi<T>(path, params, attempt + 1);
+  }
 
   if (!response.ok) throw new TmdbError(response.status, `TMDb request failed with status ${response.status}.`);
   return response.json() as Promise<T>;
@@ -392,7 +412,13 @@ function languageName(code: string | undefined): string | null {
 }
 
 function toCast(cast: TmdbCastCredit[], baseUrl: string, profileSizes: string[]): CastMember[] {
-  return cast.slice(0, 8).map((member) => ({
+  const seen = new Set<number>();
+  const unique = cast.filter((member) => {
+    if (seen.has(member.id)) return false;
+    seen.add(member.id);
+    return true;
+  });
+  return unique.slice(0, 8).map((member) => ({
     id: member.id,
     name: member.name,
     character: member.character,
@@ -466,11 +492,6 @@ export async function getUpcomingMovieReleases(): Promise<UpcomingMovie[]> {
   }));
 
   return releases;
-}
-
-export async function getMovieCatalog(): Promise<Catalog> {
-  const [catalog, releases] = await Promise.all([getHomeMovieCatalog(), getUpcomingMovieReleases()]);
-  return { ...catalog, releases };
 }
 
 async function listMovies(path: string, page: number, params: Record<string, string> = {}) {
@@ -554,6 +575,7 @@ export async function getMovieDetails(id: number): Promise<MovieDetail> {
     trailerKey: pickTrailerKey(detail.videos),
     director,
     originalLanguage: languageName(detail.original_language),
+    productionCountries: detail.production_countries.map((country) => country.name),
     cast: toCast(detail.credits.cast, secure_base_url, profile_sizes),
     recommendations: prioritizeMediaItems(mapMovies(detail.recommendations, configuration, genres), preferences),
     // TMDb's release_dates.release_date is a full ISO timestamp
@@ -581,6 +603,30 @@ export async function getMovieRecommendations(id: number, page = 1) {
   ]);
   const genres = new Map(genreResponse.genres.map((genre) => [genre.id, genre.name]));
   return toPagedResult(response, prioritizeMediaItems(mapMovies(response, configuration, genres), preferences));
+}
+
+// A lightweight sibling to getMovieDetails: franchise-update checks run over
+// every rated/watchlisted movie, so this skips the credits/videos/keywords
+// append_to_response fields that call isn't going to use.
+export async function getMovieCollectionId(id: number): Promise<{ id: number; name: string } | null> {
+  const detail = await requestTmdb<Pick<TmdbMovieDetail, "belongs_to_collection">>(`movie/${id}`);
+  return detail.belongs_to_collection;
+}
+
+export type CollectionPart = { tmdbId: number; title: string; releaseDate: string | null; posterUrl: string | null };
+
+export async function getCollectionParts(collectionId: number): Promise<CollectionPart[]> {
+  const [configuration, collection] = await Promise.all([
+    requestTmdb<TmdbConfiguration>("configuration"),
+    requestTmdb<TmdbCollection>(`collection/${collectionId}`),
+  ]);
+
+  return collection.parts.map((part) => ({
+    tmdbId: part.id,
+    title: part.title,
+    releaseDate: part.release_date || null,
+    posterUrl: imageUrl(configuration.images.secure_base_url, configuration.images.poster_sizes, "w342", part.poster_path),
+  }));
 }
 
 async function listTvShows(path: string, page: number) {
@@ -723,6 +769,7 @@ export async function getTvDetails(id: number): Promise<TvShowDetail> {
     trailerKey: pickTrailerKey(detail.videos),
     creators,
     originalLanguage: languageName(detail.original_language),
+    productionCountries: detail.production_countries.map((country) => country.name),
     cast: toCast(detail.credits.cast, secure_base_url, profile_sizes),
     recommendations: prioritizeMediaItems(mapTvShows(detail.recommendations, configuration, genres), preferences),
     numberOfSeasons: detail.number_of_seasons,
@@ -751,15 +798,6 @@ export async function getTvRecommendations(id: number, page = 1) {
 export async function getTvShowName(id: number): Promise<string> {
   const detail = await requestTmdb<{ name: string }>(`tv/${id}`);
   return detail.name;
-}
-
-// The bare detail endpoint returns full {id, name} genre objects (unlike list
-// responses, which only carry genre_ids) — cheap way to get a genre id to feed
-// into discover's with_genres param without a second lookup against the genre list.
-export async function getPrimaryGenre(id: number, mediaType: MediaType): Promise<{ id: number; name: string } | null> {
-  const path = mediaType === "tv" ? `tv/${id}` : `movie/${id}`;
-  const detail = await requestTmdb<{ genres: Array<{ id: number; name: string }> }>(path);
-  return detail.genres[0] ?? null;
 }
 
 export async function discoverMoviesByGenre(genreId: number, page = 1) {
@@ -829,19 +867,31 @@ async function resolvePersonId(name: string): Promise<number | null> {
 async function buildDiscoverParams(features: DiscoverFeature[], mediaType: MediaType): Promise<Record<string, string>> {
   const params: Record<string, string> = { sort_by: "popularity.desc", "vote_count.gte": "50" };
   const genreIds: number[] = [];
+  const excludedGenreIds: number[] = [];
   const keywordIds: number[] = [];
   const personIds: number[] = [];
+  const castIds: number[] = [];
+  const crewIds: number[] = [];
 
   await Promise.all(features.map(async (feature) => {
     if (feature.group === "genre") {
       const id = await resolveGenreId(feature.value, mediaType);
       if (id) genreIds.push(id);
+    } else if (feature.group === "exclude-genre") {
+      const id = await resolveGenreId(feature.value, mediaType);
+      if (id) excludedGenreIds.push(id);
     } else if (feature.group === "keyword") {
       const id = await resolveKeywordId(feature.value);
       if (id) keywordIds.push(id);
     } else if (feature.group === "person") {
       const id = await resolvePersonId(feature.value);
       if (id) personIds.push(id);
+    } else if (feature.group === "actor") {
+      const id = await resolvePersonId(feature.value);
+      if (id) castIds.push(id);
+    } else if (feature.group === "director") {
+      const id = await resolvePersonId(feature.value);
+      if (id) crewIds.push(id);
     } else if (feature.group === "decade") {
       const decade = Number(feature.value);
       if (Number.isInteger(decade)) {
@@ -857,59 +907,44 @@ async function buildDiscoverParams(features: DiscoverFeature[], mediaType: Media
         params["with_runtime.gte"] = String(bucket[0]);
         params["with_runtime.lte"] = String(bucket[1]);
       }
+    } else if (feature.group === "runtime-max" && mediaType === "movie") {
+      const minutes = Number(feature.value);
+      if (Number.isInteger(minutes) && minutes > 0) params["with_runtime.lte"] = String(minutes);
     } else if (feature.group === "certification") {
       params.certification_country = DEFAULT_REGION;
       params.certification = feature.value.toUpperCase();
     } else if (feature.group === "country") {
       params.with_origin_country = feature.value.toUpperCase();
+    } else if (feature.group === "date-range") {
+      const [start, end] = feature.value.split("|");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return;
+      const [gteKey, lteKey] = mediaType === "tv" ? ["first_air_date.gte", "first_air_date.lte"] : ["primary_release_date.gte", "primary_release_date.lte"];
+      params[gteKey] = start;
+      params[lteKey] = end;
+    } else if (feature.group === "provider") {
+      params.with_watch_providers = feature.value;
+      params.watch_region = DEFAULT_REGION;
+      params.with_watch_monetization_types = "flatrate";
+    } else if (feature.group === "certification-max") {
+      const maximum = feature.value.split("|").find((value) => value.startsWith(`${mediaType}=`))?.split("=")[1];
+      if (maximum) {
+        params.certification_country = DEFAULT_REGION;
+        params["certification.lte"] = maximum;
+      }
+    } else if (mediaType === "tv" && feature.group === "tv-status") {
+      params.with_status = feature.value;
+    } else if (mediaType === "tv" && feature.group === "tv-type") {
+      params.with_type = feature.value;
     }
   }));
 
   if (genreIds.length > 0) params.with_genres = genreIds.join("|");
+  if (excludedGenreIds.length > 0) params.without_genres = excludedGenreIds.join("|");
   if (keywordIds.length > 0) params.with_keywords = keywordIds.join("|");
   if (personIds.length > 0) params.with_people = personIds.join("|");
+  if (castIds.length > 0 && mediaType === "movie") params.with_cast = castIds.join("|");
+  if (crewIds.length > 0 && mediaType === "movie") params.with_crew = crewIds.join("|");
   return params;
-}
-
-// TMDb's `with_runtime.lte` discover param is honored for movies but not TV
-// (verified empirically — /discover/tv returns the same results with or
-// without it, since a series doesn't have one single runtime), so a runtime
-// constraint can only be applied accurately to movies.
-export async function discoverMoviesUnderRuntime(maxMinutes: number, page = 1) {
-  const [configuration, genreResponse, response, preferences] = await Promise.all([
-    requestTmdb<TmdbConfiguration>("configuration"),
-    requestTmdb<TmdbGenresResponse>("genre/movie/list"),
-    requestTmdb<TmdbListResponse>("discover/movie", { sort_by: "popularity.desc", "vote_count.gte": "50", "with_runtime.lte": String(maxMinutes), page: String(page) }),
-    readContentPreferences(),
-  ]);
-  const genres = new Map(genreResponse.genres.map((genre) => [genre.id, genre.name]));
-  return toPagedResult(response, prioritizeMediaItems(mapMovies(response, configuration, genres), preferences));
-}
-
-// with_watch_providers only returns titles verified as actually available
-// from that provider in watch_region — unlike the general popular/top-rated
-// pools, which carry no provider data at all, so a "flatrate"-only filter
-// here would let unverified titles through under a false "on Netflix" claim.
-export async function discoverMoviesByProvider(providerId: number, page = 1) {
-  const [configuration, genreResponse, response, preferences] = await Promise.all([
-    requestTmdb<TmdbConfiguration>("configuration"),
-    requestTmdb<TmdbGenresResponse>("genre/movie/list"),
-    requestTmdb<TmdbListResponse>("discover/movie", { sort_by: "popularity.desc", "vote_count.gte": "20", with_watch_providers: String(providerId), watch_region: DEFAULT_REGION, page: String(page) }),
-    readContentPreferences(),
-  ]);
-  const genres = new Map(genreResponse.genres.map((genre) => [genre.id, genre.name]));
-  return toPagedResult(response, prioritizeMediaItems(mapMovies(response, configuration, genres), preferences));
-}
-
-export async function discoverTvByProvider(providerId: number, page = 1) {
-  const [configuration, genreResponse, response, preferences] = await Promise.all([
-    requestTmdb<TmdbConfiguration>("configuration"),
-    requestTmdb<TmdbGenresResponse>("genre/tv/list"),
-    requestTmdb<TmdbTvListResponse>("discover/tv", { sort_by: "popularity.desc", "vote_count.gte": "20", with_watch_providers: String(providerId), watch_region: DEFAULT_REGION, page: String(page) }),
-    readContentPreferences(),
-  ]);
-  const genres = new Map(genreResponse.genres.map((genre) => [genre.id, genre.name]));
-  return toPagedResult(response, prioritizeMediaItems(mapTvShows(response, configuration, genres), preferences));
 }
 
 export async function discoverMoviesByFeatures(features: DiscoverFeature[], page = 1) {

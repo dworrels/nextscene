@@ -6,17 +6,16 @@ import { predictPersonalRating, type PersonalModel } from "@/lib/personal-model"
 import { HIGH_MATCH_THRESHOLD } from "@/lib/recommendation-selection";
 import {
   getPersonallyRankedCandidates,
+  getFilteredCandidateItems,
   getPersonalModel,
   getPersonalTasteVector,
   getRecentCandidateItems,
   getReferencedTitleRecommendations,
-  getRuntimeCandidateItems,
   getSearchCandidatePool,
-  getWatchProviderCandidateItems,
   resolveReferencedTitle,
 } from "@/lib/recommendations";
-import { getMediaCards } from "@/lib/tmdb";
-import { parseSearchIntent } from "@/lib/search-intent";
+import { getMediaCards, type DiscoverFeature } from "@/lib/tmdb";
+import { parseSearchIntent, type SearchIntent } from "@/lib/search-intent";
 import { diversifyVibeResults, filterConfidentResults, type SemanticSearchResult } from "@/lib/vibe-search";
 import type { MediaItem } from "@/types/tmdb";
 
@@ -30,6 +29,7 @@ export type SemanticSearchState = {
 };
 
 const RESULT_COUNT = 48;
+const MIN_RESULT_COUNT = 24;
 const RECENCY_YEARS = 2;
 // Below this the top match itself is weak — a signal the query didn't land,
 // not just that lower-ranked results trail off (see filterConfidentResults
@@ -52,6 +52,60 @@ function mergeUnique(...lists: MediaItem[][]): MediaItem[] {
     }
   }
   return merged;
+}
+
+function hardDiscoverFeatures(intent: SearchIntent): DiscoverFeature[] {
+  const features: DiscoverFeature[] = intent.excludedGenres.map((genre) => ({ group: "exclude-genre", value: genre.tmdbName }));
+  if (intent.runtimeUnderMinutes) features.push({ group: "runtime-max", value: String(intent.runtimeUnderMinutes) });
+  if (intent.watchProvider) features.push({ group: "provider", value: String(intent.watchProvider.id) });
+  if (intent.dateRange) features.push({ group: "date-range", value: `${intent.dateRange.start}|${intent.dateRange.end}` });
+  if (intent.originalLanguage) features.push({ group: "language", value: intent.originalLanguage.code });
+  if (intent.originCountry) features.push({ group: "country", value: intent.originCountry.code });
+  if (intent.familyFriendly) features.push({ group: "certification-max", value: "movie=PG|tv=TV-PG" });
+  if (intent.tvType) features.push({ group: "tv-type", value: "2" });
+  if (intent.tvStatus) features.push({ group: "tv-status", value: intent.tvStatus.value });
+  if (intent.person && intent.mediaType !== "tv") features.push({ group: intent.person.role, value: intent.person.name });
+  return features;
+}
+
+function expansionDiscoverFeatures(intent: SearchIntent): DiscoverFeature[] {
+  return intent.includedGenres.map((genre) => ({ group: "genre", value: genre.tmdbName }));
+}
+
+function hardConstraintMediaType(intent: SearchIntent): MediaItem["mediaType"] | null {
+  if (intent.tvType || intent.tvStatus || intent.maxSeasons || intent.maxEpisodes) return "tv";
+  if (intent.person && intent.mediaType !== "tv") return "movie";
+  return intent.mediaType;
+}
+
+function hasTvLengthConstraint(intent: SearchIntent): boolean {
+  return intent.maxSeasons !== null || intent.maxEpisodes !== null;
+}
+
+function applyListLevelFilters(items: MediaItem[], intent: SearchIntent): MediaItem[] {
+  let candidates = items;
+  if (intent.runtimeUnderMinutes) candidates = candidates.filter((item) => item.mediaType === "movie");
+  else if (intent.mediaType) candidates = candidates.filter((item) => item.mediaType === intent.mediaType);
+  if (intent.recency === "this-year") {
+    const year = String(new Date().getFullYear());
+    candidates = candidates.filter((item) => item.releaseDate?.startsWith(year));
+  } else if (intent.recency === "recent") {
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - RECENCY_YEARS);
+    const cutoffDate = cutoff.toISOString().slice(0, 10);
+    candidates = candidates.filter((item) => item.releaseDate && item.releaseDate >= cutoffDate);
+  }
+  const { dateRange, originalLanguage, originCountry } = intent;
+  if (dateRange) candidates = candidates.filter((item) => item.releaseDate >= dateRange.start && item.releaseDate <= dateRange.end);
+  if (originalLanguage) candidates = candidates.filter((item) => item.originalLanguageCode === originalLanguage.code);
+  if (originCountry) candidates = candidates.filter((item) => item.originCountryCodes?.includes(originCountry.code));
+  if (intent.excludedGenres.length > 0) {
+    candidates = candidates.filter((item) => {
+      const genreNames = item.genres?.length ? item.genres : [item.genre];
+      return !intent.excludedGenres.some((excluded) => genreNames.some((name) => excluded.matcher.test(name)));
+    });
+  }
+  return candidates;
 }
 
 // "Surprise me" isn't a mood or a topic — embedding that phrase and ranking
@@ -101,47 +155,42 @@ export async function semanticSearchAction(_prevState: SemanticSearchState, form
       };
     }
 
-    const [basePool, referencedItem, personalTasteVector, personalModel, runtimeItems, watchProviderItems] = await Promise.all([
-      getSearchCandidatePool(query),
-      intent.referencedTitle ? resolveReferencedTitle(intent.referencedTitle, intent.mediaType) : Promise.resolve(null),
+    const hardFeatures = hardDiscoverFeatures(intent);
+    const expansionFeatures = expansionDiscoverFeatures(intent);
+    const hasHardConstraints = hardFeatures.length > 0 || hasTvLengthConstraint(intent);
+    const hardMediaType = hardConstraintMediaType(intent);
+    const expansionQuery = hardFeatures.length > 0 ? [...hardFeatures, ...expansionFeatures] : expansionFeatures;
+    const [basePool, referencedItems, personalTasteVector, personalModel, hardItems, expansionItems] = await Promise.all([
+      hardFeatures.length > 0 ? Promise.resolve([]) : getSearchCandidatePool(query),
+      Promise.all(intent.referencedTitles.map((title) => resolveReferencedTitle(title, intent.mediaType))).then((items) => items.filter((item): item is MediaItem => item !== null)),
       intent.usePersonalHistory ? getPersonalTasteVector() : Promise.resolve(null),
       getPersonalModel(),
-      intent.runtimeUnderMinutes ? getRuntimeCandidateItems(intent.runtimeUnderMinutes) : Promise.resolve(null),
-      intent.watchProvider ? getWatchProviderCandidateItems(intent.watchProvider.id, intent.mediaType) : Promise.resolve(null),
+      hardFeatures.length > 0 ? getFilteredCandidateItems(hardFeatures, hardMediaType) : Promise.resolve(null),
+      expansionQuery.length > 0 ? getFilteredCandidateItems(expansionQuery, hardFeatures.length > 0 ? hardMediaType : intent.mediaType) : Promise.resolve([]),
     ]);
 
     const [referencedRecommendations, recentItems] = await Promise.all([
-      referencedItem ? getReferencedTitleRecommendations(referencedItem) : Promise.resolve([]),
+      hardFeatures.length > 0 ? Promise.resolve([]) : Promise.all(referencedItems.map(getReferencedTitleRecommendations)).then((lists) => mergeUnique(...lists)),
       intent.recency ? getRecentCandidateItems(intent.mediaType) : Promise.resolve([]),
     ]);
 
-    // A runtime or watch-provider constraint can only be verified for titles
-    // sourced straight from TMDb's own filters (see getRuntimeCandidateItems
-    // / getWatchProviderCandidateItems) — the general pool's list-endpoint
-    // items don't carry runtime or provider data, so they'd either all get
-    // dropped by a post-hoc filter or, worse, let unverified titles through
-    // under a false "under N hours" / "on Netflix" claim.
-    const verifiedSources = [runtimeItems, watchProviderItems].filter((source): source is MediaItem[] => source !== null);
-    let candidates = verifiedSources.length > 0
-      ? mergeUnique(referencedRecommendations, ...verifiedSources)
-      : mergeUnique(referencedRecommendations, recentItems, basePool);
-    if (referencedItem) candidates = candidates.filter((item) => mediaKey(item) !== mediaKey(referencedItem));
-    if (intent.runtimeUnderMinutes) candidates = candidates.filter((item) => item.mediaType === "movie");
-    else if (intent.mediaType) candidates = candidates.filter((item) => item.mediaType === intent.mediaType);
-    if (intent.recency === "this-year") {
-      const year = String(new Date().getFullYear());
-      candidates = candidates.filter((item) => item.releaseDate?.startsWith(year));
-    } else if (intent.recency === "recent") {
-      const cutoff = new Date();
-      cutoff.setFullYear(cutoff.getFullYear() - RECENCY_YEARS);
-      const cutoffDate = cutoff.toISOString().slice(0, 10);
-      candidates = candidates.filter((item) => item.releaseDate && item.releaseDate >= cutoffDate);
+    // Hard constraints are sourced only from TMDb discover queries. Softer
+    // signals (positive genre and title similarity) broaden that verified pool
+    // or the normal semantic pool; they never discard it.
+    let candidates = hardItems !== null
+      ? mergeUnique(hardItems, expansionItems)
+      : mergeUnique(referencedRecommendations, recentItems, basePool, expansionItems);
+    if (referencedItems.length > 0) {
+      const referenceKeys = new Set(referencedItems.map(mediaKey));
+      candidates = candidates.filter((item) => !referenceKeys.has(mediaKey(item)));
     }
-    if (intent.excludedGenres.length > 0) {
-      candidates = candidates.filter((item) => {
-        const genreNames = item.genres?.length ? item.genres : [item.genre];
-        return !intent.excludedGenres.some((excluded) => genreNames.some((name) => excluded.matcher.test(name)));
-      });
+    candidates = applyListLevelFilters(candidates, intent);
+    if (hardFeatures.length > 0 && candidates.length < MIN_RESULT_COUNT) {
+      const [widerHardItems, widerExpansionItems] = await Promise.all([
+        getFilteredCandidateItems(hardFeatures, hardMediaType, 5),
+        expansionQuery.length > hardFeatures.length ? getFilteredCandidateItems(expansionQuery, hardMediaType, 5) : Promise.resolve([]),
+      ]);
+      candidates = applyListLevelFilters(mergeUnique(widerHardItems, widerExpansionItems).filter((item) => !referencedItems.some((reference) => mediaKey(reference) === mediaKey(item))), intent);
     }
 
     if (candidates.length === 0) {
@@ -149,13 +198,16 @@ export async function semanticSearchAction(_prevState: SemanticSearchState, form
         status: "idle",
         results: [],
         noResults: true,
-        appliedFilters: describeIntent(intent, referencedItem, personalTasteVector),
+        appliedFilters: describeIntent(intent, referencedItems, personalTasteVector),
       };
     }
 
-    const [queryVector, referencedVector, candidateVectors, preferences] = await Promise.all([
+    const [queryVector, referencedVectors, candidateVectors, preferences] = await Promise.all([
       embedQuery(query),
-      referencedItem ? embedMediaItems([referencedItem]).then((vectors) => vectors.get(mediaKey(referencedItem)) ?? null) : Promise.resolve(null),
+      referencedItems.length > 0 ? embedMediaItems(referencedItems).then((vectors) => referencedItems.flatMap((item) => {
+        const vector = vectors.get(mediaKey(item));
+        return vector ? [vector] : [];
+      })) : Promise.resolve([]),
       embedMediaItems(candidates),
       readContentPreferences(),
     ]);
@@ -165,23 +217,35 @@ export async function semanticSearchAction(_prevState: SemanticSearchState, form
         const vector = candidateVectors.get(mediaKey(item));
         if (!vector) return null;
         let similarity = cosineSimilarity(queryVector, vector);
-        if (referencedVector) similarity = similarity * 0.4 + cosineSimilarity(referencedVector, vector) * 0.6;
+        if (referencedVectors.length > 0) {
+          const referenceSimilarity = referencedVectors.reduce((total, referenceVector) => total + cosineSimilarity(referenceVector, vector), 0) / referencedVectors.length;
+          similarity = similarity * 0.4 + referenceSimilarity * 0.6;
+        }
         if (personalTasteVector) similarity = similarity * 0.6 + cosineSimilarity(personalTasteVector, vector) * 0.4;
         return { item, similarity, predictedRating: null, predictedConfidence: null };
       })
       .filter((entry): entry is SemanticSearchResult => entry !== null)
       .sort((a, b) => (b.similarity + languagePreferenceBoost(b.item, preferences)) - (a.similarity + languagePreferenceBoost(a.item, preferences)));
 
-    const weakMatch = (ranked[0]?.similarity ?? 0) < WEAK_MATCH_THRESHOLD;
+    const lengthFiltered = hasTvLengthConstraint(intent) ? await filterTvLength(ranked, intent) : ranked;
+    if (lengthFiltered.length === 0) {
+      return {
+        status: "idle",
+        results: [],
+        noResults: true,
+        appliedFilters: describeIntent(intent, referencedItems, personalTasteVector),
+      };
+    }
+    const weakMatch = !hasHardConstraints && (lengthFiltered[0]?.similarity ?? 0) < WEAK_MATCH_THRESHOLD;
     if (weakMatch) {
       return {
         status: "idle",
         results: [],
         weakMatch: true,
-        appliedFilters: describeIntent(intent, referencedItem, personalTasteVector),
+        appliedFilters: describeIntent(intent, referencedItems, personalTasteVector),
       };
     }
-    const diversified = diversifyVibeResults(filterConfidentResults(ranked), RESULT_COUNT);
+    const diversified = diversifyVibeResults(filterConfidentResults(lengthFiltered, MIN_RESULT_COUNT), RESULT_COUNT);
     // candidates (and so `ranked`) are sourced from list-endpoint MediaItem
     // cards that lack keywords/cast/runtime/certification — fine for
     // similarity ranking, but predictPersonalRating needs the same full
@@ -189,7 +253,7 @@ export async function semanticSearchAction(_prevState: SemanticSearchState, form
     // the diversified result set actually being returned, not the whole pool.
     const results = personalModel ? await hydratePredictedRatings(diversified, personalModel) : diversified;
 
-    return { status: "idle", results, weakMatch, appliedFilters: describeIntent(intent, referencedItem, personalTasteVector) };
+    return { status: "idle", results, weakMatch, appliedFilters: describeIntent(intent, referencedItems, personalTasteVector) };
   } catch {
     return { status: "error", results: [], message: "Semantic search isn't available right now — check that OPENAI_API_KEY is configured." };
   }
@@ -208,18 +272,45 @@ async function hydratePredictedRatings(results: SemanticSearchResult[], model: P
   });
 }
 
-function describeIntent(intent: ReturnType<typeof parseSearchIntent>, referencedItem: MediaItem | null, personalTasteVector: number[] | null): string[] | undefined {
+// Season and episode counts are not available from TMDb list endpoints. Only
+// queries that ask for those constraints fetch the leading TV candidates'
+// full profiles, then retain titles with verified counts.
+async function filterTvLength(results: SemanticSearchResult[], intent: SearchIntent): Promise<SemanticSearchResult[]> {
+  const inspect = results.filter((result) => result.item.mediaType === "tv").slice(0, 120);
+  const cards = await getMediaCards(inspect.map(({ item }) => ({ id: item.id, mediaType: "tv" })));
+  return results.flatMap((result) => {
+    if (result.item.mediaType !== "tv") return [];
+    const item = cards.get(mediaKey(result.item));
+    if (!item) return [];
+    if (intent.maxSeasons !== null && (item.seasonCount === null || item.seasonCount === undefined || item.seasonCount > intent.maxSeasons)) return [];
+    if (intent.maxEpisodes !== null && (item.episodeCount === null || item.episodeCount === undefined || item.episodeCount > intent.maxEpisodes)) return [];
+    return [{ ...result, item }];
+  });
+}
+
+function describeIntent(intent: SearchIntent, referencedItems: MediaItem[], personalTasteVector: number[] | null): string[] | undefined {
   const filters: string[] = [];
-  if (referencedItem) filters.push(`Similar to ${referencedItem.title} (${referencedItem.year})`);
-  else if (intent.referencedTitle) filters.push(`Couldn't find "${intent.referencedTitle}" — searched by mood instead`);
+  for (const item of referencedItems) filters.push(`Similar to ${item.title} (${item.year})`);
+  if (referencedItems.length === 0 && intent.referencedTitles.length > 0) filters.push(`Couldn't find ${intent.referencedTitles.map((title) => `"${title}"`).join(" or ")} — searched by mood instead`);
+  if (intent.person) filters.push(`${intent.person.role === "director" ? "Directed by" : "With"} ${intent.person.name}`);
   if (intent.runtimeUnderMinutes) {
     filters.push(intent.runtimeUnderMinutes % 60 === 0 ? `Under ${intent.runtimeUnderMinutes / 60}h` : `Under ${intent.runtimeUnderMinutes} min`);
     filters.push("Movies only");
   } else if (intent.mediaType) filters.push(intent.mediaType === "tv" ? "TV shows only" : "Movies only");
   if (intent.recency === "this-year") filters.push("Released this year");
   else if (intent.recency === "recent") filters.push("Recent releases");
+  if (intent.dateRange) filters.push(intent.dateRange.label);
+  if (intent.originalLanguage) filters.push(intent.originalLanguage.label);
+  if (intent.originCountry) filters.push(intent.originCountry.label);
   if (intent.watchProvider) filters.push(`On ${intent.watchProvider.name}`);
+  for (const included of intent.includedGenres) filters.push(included.label);
   for (const excluded of intent.excludedGenres) filters.push(`No ${excluded.label}`);
+  if (intent.familyFriendly) filters.push("Family-friendly");
+  if (intent.lowIntensity) filters.push("Lower intensity");
+  if (intent.tvType) filters.push("Limited series");
+  if (intent.tvStatus) filters.push(intent.tvStatus.label);
+  if (intent.maxSeasons !== null) filters.push(`Up to ${intent.maxSeasons} season${intent.maxSeasons === 1 ? "" : "s"}`);
+  if (intent.maxEpisodes !== null) filters.push(`Up to ${intent.maxEpisodes} episodes`);
   if (intent.usePersonalHistory && personalTasteVector) filters.push("Based on your ratings");
   return filters.length > 0 ? filters : undefined;
 }

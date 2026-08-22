@@ -48,7 +48,7 @@ export function TrailerButton({ videoKey }: { videoKey: string }) {
 
   return <>
     <button
-      className="inline-flex min-h-[46px] items-center gap-2 rounded-full border border-white/30 bg-white/10 px-6 text-sm font-semibold text-white backdrop-blur-sm hover:bg-white/20"
+      className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-full border border-white/30 bg-white/10 px-6 text-sm font-semibold text-white backdrop-blur-sm hover:bg-white/20 max-[760px]:px-3 max-[760px]:text-xs"
       onClick={() => setOpen(true)}
       ref={triggerRef}
     >

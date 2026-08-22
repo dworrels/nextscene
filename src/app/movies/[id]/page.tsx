@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Film, Star } from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { CatalogError } from "@/components/catalog-state";
+import { FavoriteButton } from "@/components/favorite-button";
 import { MovieRail } from "@/components/movie-rail";
 import { RatingControl } from "@/components/rating-control";
 import { SiteHeader } from "@/components/site-header";
@@ -12,6 +13,7 @@ import { WatchlistButton } from "@/components/watchlist-button";
 import { WhyWatch } from "@/components/why-watch";
 import { getInitialWhyWatchState } from "@/lib/why-watch-actions";
 import { filterReleaseTimeline, formatFullDate, formatRuntime } from "@/lib/format";
+import { isFavorite } from "@/lib/favorites";
 import { getRating } from "@/lib/ratings";
 import { getMovieDetails, isTmdbNotFound } from "@/lib/tmdb";
 import { isInWatchlist } from "@/lib/watchlist";
@@ -50,10 +52,11 @@ export default async function MoviePage({ params }: { params: Promise<{ id: stri
 
   if (!movie) return <main className="pb-24"><SiteHeader /><CatalogError /></main>;
 
-  const [whyWatchState, inWatchlist, rating] = await Promise.all([
+  const [whyWatchState, inWatchlist, rating, favorited] = await Promise.all([
     getInitialWhyWatchState(movie),
     isInWatchlist("movie", movie.id),
     getRating("movie", movie.id),
+    isFavorite("movie", movie.id),
   ]);
 
   const infoRows = [
@@ -62,6 +65,7 @@ export default async function MoviePage({ params }: { params: Promise<{ id: stri
     { label: "Rated", value: movie.certification },
     { label: "Genres", value: movie.genres.join(", ") || null },
     { label: "Original Language", value: movie.originalLanguage },
+    { label: "Countries", value: movie.productionCountries.join(", ") || null },
     { label: "Director", value: movie.director },
   ].filter((row) => row.value);
   const releaseTimeline = filterReleaseTimeline(movie.releaseTimeline);
@@ -72,10 +76,10 @@ export default async function MoviePage({ params }: { params: Promise<{ id: stri
       <div className="absolute inset-0 -z-[2] rounded-[18px] max-[760px]:rounded-[11px] bg-[#252725] bg-cover bg-center" style={{ backgroundImage: movie.backdropUrl ? `url(${movie.backdropUrl})` : undefined }} />
       <div className="absolute inset-0 -z-[1] rounded-[18px] max-[760px]:rounded-[11px] bg-[linear-gradient(90deg,rgba(0,0,0,.85)_0%,rgba(0,0,0,.45)_45%,rgba(0,0,0,.05)_80%),linear-gradient(0deg,rgba(0,0,0,.75),transparent_60%)]" />
       <BackButton className="absolute left-10 top-8 max-[760px]:left-6 max-[760px]:top-6 inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20" fallbackHref="/" ariaLabel="Go back" />
-      <div className="max-w-[520px] max-[760px]:max-w-none px-10 pt-24 pb-16 max-[760px]:px-6 max-[760px]:pt-20 max-[760px]:pb-9 max-[480px]:px-4 max-[480px]:pt-20 max-[480px]:pb-7">
+      <div className="min-w-0 max-w-[520px] max-[760px]:max-w-none px-10 pt-24 pb-16 max-[760px]:px-6 max-[760px]:pt-20 max-[760px]:pb-9 max-[480px]:px-4 max-[480px]:pt-20 max-[480px]:pb-7">
         <h1 className="m-0 text-[clamp(42px,6vw,84px)] max-[760px]:text-[40px] max-[480px]:text-[32px] font-bold leading-[0.98] max-[760px]:leading-[1.06] tracking-[-0.02em] text-white break-words">{movie.title}</h1>
 
-        <div className="mt-7 max-[760px]:mt-5 flex flex-wrap gap-3">
+        <div className="mt-7 max-[760px]:mt-5 flex flex-nowrap gap-3 overflow-x-auto pb-1 [scrollbar-width:none] max-[760px]:grid max-[760px]:grid-cols-2 max-[760px]:overflow-visible max-[760px]:gap-3 max-[760px]:[&>button]:w-full max-[760px]:[&>form]:min-w-0 max-[760px]:[&>form>button]:w-full max-[760px]:[&>form:last-child]:justify-self-start max-[760px]:[&>form:last-child>button]:w-auto">
           {movie.trailerKey ? <TrailerButton videoKey={movie.trailerKey} /> : null}
           <WatchlistButton
             imdbId={movie.imdbId}
@@ -86,6 +90,7 @@ export default async function MoviePage({ params }: { params: Promise<{ id: stri
             tmdbId={movie.id}
           />
           <RatingControl mediaType="movie" rating={rating} title={movie.title} tmdbId={movie.id} />
+          <FavoriteButton isFavorite={favorited} mediaType="movie" title={movie.title} tmdbId={movie.id} />
         </div>
       </div>
     </article>

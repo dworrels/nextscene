@@ -71,6 +71,7 @@ export type MovieDetail = Movie & {
   trailerKey: string | null;
   director: string | null;
   originalLanguage: string | null;
+  productionCountries: string[];
   cast: CastMember[];
   recommendations: Movie[];
   releaseTimeline: ReleaseTimelineEntry[];
@@ -101,6 +102,7 @@ export type TvShowDetail = TvShow & {
   trailerKey: string | null;
   creators: string[];
   originalLanguage: string | null;
+  productionCountries: string[];
   cast: CastMember[];
   recommendations: TvShow[];
   numberOfSeasons: number;

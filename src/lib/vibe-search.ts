@@ -24,16 +24,17 @@ export function extractVibeGenres(query: string, limit = 3): VibeGenreFilter[] {
 }
 
 // Relative to the top match rather than a fixed number, since absolute
-// cosine similarity varies by phrasing and embedding model. A query with no
-// genuinely strong matches shouldn't pad itself out with tenuous ones just
-// to hit a result count.
+// cosine similarity varies by phrasing and embedding model. The caller can
+// retain a modest ranked fallback so well-understood queries do not end with
+// only a handful of cards when their similarity curve drops off quickly.
 const RELATIVE_SIMILARITY_FLOOR = 0.82;
 
-export function filterConfidentResults(results: SemanticSearchResult[]): SemanticSearchResult[] {
+export function filterConfidentResults(results: SemanticSearchResult[], minimumResults = 0): SemanticSearchResult[] {
   const top = results[0]?.similarity ?? 0;
   if (top <= 0) return results;
   const floor = top * RELATIVE_SIMILARITY_FLOOR;
-  return results.filter((result) => result.similarity >= floor);
+  const confident = results.filter((result) => result.similarity >= floor);
+  return confident.length >= minimumResults ? confident : results.slice(0, Math.min(minimumResults, results.length));
 }
 
 // Keep the first screen varied without hiding the best semantic matches. Only

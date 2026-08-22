@@ -23,11 +23,8 @@ import { extractVibeGenres } from "@/lib/vibe-search";
 import {
   discoverMoviesByFeatures,
   discoverMoviesByGenre,
-  discoverMoviesByProvider,
-  discoverMoviesUnderRuntime,
   discoverTvByFeatures,
   discoverTvByGenre,
-  discoverTvByProvider,
   getMediaCards,
   getMovieRecommendations,
   getNowPlayingMovies,
@@ -43,6 +40,7 @@ import {
   searchMovieId,
   searchTvId,
 } from "@/lib/tmdb";
+import type { DiscoverFeature } from "@/lib/tmdb";
 import type { WatchlistRow } from "@/lib/watchlist";
 import { readWatchlist } from "@/lib/watchlist";
 import type { MediaItem, MediaType } from "@/types/tmdb";
@@ -118,10 +116,19 @@ async function getRatedMediaItems(rows: RatingRow[]): Promise<RatedMedia[]> {
   const matched = rows.filter((row) => row.tmdbId !== null);
   if (matched.length === 0) return [];
   const cards = await getMediaCards(matched.map((row) => ({ id: row.tmdbId as number, mediaType: row.mediaType })));
-  return matched.flatMap((row) => {
+  // Bad IMDb-to-TMDB matches can leave two rating rows pointing at the same
+  // title (e.g. two different IMDb entries both resolving to the same TMDB
+  // id) — keep just the most recently matched rating per title so it isn't
+  // double-counted in the taste model or duplicated in "why watch" examples.
+  const byKey = new Map<string, { item: MediaItem; rating: number; matchedAt: string | null }>();
+  for (const row of matched) {
     const item = cards.get(`${row.mediaType}-${row.tmdbId}`);
-    return item ? [{ item, rating: row.rating }] : [];
-  });
+    if (!item) continue;
+    const key = mediaKey(item);
+    const existing = byKey.get(key);
+    if (!existing || (row.matchedAt ?? "") >= (existing.matchedAt ?? "")) byKey.set(key, { item, rating: row.rating, matchedAt: row.matchedAt });
+  }
+  return [...byKey.values()].map(({ item, rating }) => ({ item, rating }));
 }
 
 // Every matched rating contributes to the signed taste vector. Cached title
@@ -315,37 +322,16 @@ export async function getRecentCandidateItems(mediaType: MediaType | null): Prom
   return pool;
 }
 
-// Sourced from TMDb's own runtime filter (see discoverMoviesUnderRuntime)
-// rather than filtering the general candidate pool after the fact — most
-// candidates there come from list endpoints that don't carry runtime data at
-// all, so a post-hoc filter would either drop everything or let unverified
-// titles through. Movies only; TMDb's runtime filter isn't honored for TV.
-export async function getRuntimeCandidateItems(maxMinutes: number): Promise<MediaItem[]> {
+// Structured search constraints must come from TMDb's discover endpoints so
+// the app never claims a title satisfies a provider, date, language, or TV
+// status filter based on list data that does not contain that field.
+export async function getFilteredCandidateItems(features: DiscoverFeature[], mediaType: MediaType | null, pageCount = 3): Promise<MediaItem[]> {
   const known = await getKnownMediaKeys();
-  const responses = await Promise.all([1, 2, 3].map((page) => discoverMoviesUnderRuntime(maxMinutes, page).catch(() => null)));
-  const seen = new Set<string>();
-  const pool: MediaItem[] = [];
-  for (const response of responses) {
-    for (const item of response?.items ?? []) {
-      const key = mediaKey(item);
-      if (known.has(key) || seen.has(key)) continue;
-      seen.add(key);
-      pool.push(item);
-    }
-  }
-  return pool;
-}
-
-// Same reasoning as getRuntimeCandidateItems: sourced from TMDb's own
-// with_watch_providers filter rather than the general pool, since nothing in
-// that pool carries verified provider availability. Queries both movies and
-// TV unless a media type was already specified, since a provider mention
-// alone doesn't say which.
-export async function getWatchProviderCandidateItems(providerId: number, mediaType: MediaType | null): Promise<MediaItem[]> {
-  const known = await getKnownMediaKeys();
-  const movieCalls = mediaType === "tv" ? [] : [1, 2, 3].map((page) => discoverMoviesByProvider(providerId, page).catch(() => null));
-  const tvCalls = mediaType === "movie" ? [] : [1, 2, 3].map((page) => discoverTvByProvider(providerId, page).catch(() => null));
-  const responses = await Promise.all([...movieCalls, ...tvCalls]);
+  const pages = Array.from({ length: pageCount }, (_, index) => index + 1);
+  const responses = await Promise.all([
+    ...(mediaType === "tv" ? [] : pages.map((page) => discoverMoviesByFeatures(features, page).catch(() => null))),
+    ...(mediaType === "movie" ? [] : pages.map((page) => discoverTvByFeatures(features, page).catch(() => null))),
+  ]);
   const seen = new Set<string>();
   const pool: MediaItem[] = [];
   for (const response of responses) {
@@ -376,12 +362,6 @@ export async function getPersonalModel(): Promise<PersonalModel | null> {
   const { rows } = await readRatings();
   const profile = await buildTasteProfile(rows);
   return profile.model;
-}
-
-export async function getPersonalizedCandidatePool(): Promise<MediaItem[]> {
-  const [{ rows: ratingRows }, { rows: watchlistRows }] = await Promise.all([readRatings(), readWatchlist()]);
-  const profile = await buildTasteProfile(ratingRows);
-  return (await getPersonalizedCandidateEntries(ratingRows, profile, knownMediaKeys(ratingRows, watchlistRows))).map(({ item }) => item);
 }
 
 export async function getPersonallyRankedCandidates(limit = 60): Promise<PersonalizedCandidate[]> {
@@ -539,16 +519,6 @@ export async function getWhyWatchInsight(item: MediaItem): Promise<WhyWatchInsig
     liked: likedReferences,
     cautions: cautions.map(({ item: ratedItem, rating }) => ({ id: ratedItem.id, title: ratedItem.title, rating, mediaType: ratedItem.mediaType, posterUrl: ratedItem.posterUrl })),
   };
-}
-
-export async function getTasteSummary(limit = 12): Promise<string | null> {
-  const { rows } = await readRatings();
-  const matched = rows.filter((row) => row.tmdbId !== null);
-  if (matched.length === 0) return null;
-  const loved = [...matched].sort((a, b) => b.rating - a.rating).slice(0, limit);
-  const disliked = [...matched].sort((a, b) => a.rating - b.rating).slice(0, Math.max(4, Math.floor(limit / 2)));
-  const format = (row: RatingRow) => `${row.title} (${row.mediaType === "tv" ? "TV" : "movie"}) — ${row.rating}/10`;
-  return `Loved:\n${loved.map(format).join("\n")}\n\nAvoid:\n${disliked.map(format).join("\n")}`;
 }
 
 // Candidate ranking runs on the same lightweight MediaItem cards discover/
