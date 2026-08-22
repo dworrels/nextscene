@@ -1,6 +1,8 @@
 import type { MediaType } from "@/types/tmdb";
 
 export type RecencyIntent = "this-year" | "recent";
+export type ExcludedGenre = { label: string; matcher: RegExp };
+export type WatchProviderIntent = { id: number; name: string };
 
 export type SearchIntent = {
   mediaType: MediaType | null;
@@ -8,6 +10,8 @@ export type SearchIntent = {
   referencedTitle: string | null;
   usePersonalHistory: boolean;
   runtimeUnderMinutes: number | null;
+  excludedGenres: ExcludedGenre[];
+  watchProvider: WatchProviderIntent | null;
 };
 
 const TV_WORDS = /\b(?:tv shows?|tv series|television series|series)\b/i;
@@ -26,6 +30,55 @@ const TRAILING_CONNECTOR = /\b(?:but|except|without|minus|however)\b/i;
 const UNDER_HOURS_PATTERN = /\bunder\s+(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b/i;
 const UNDER_MINUTES_PATTERN = /\bunder\s+(\d+)\s*(?:minutes?|mins?|m)\b/i;
 
+// Genre names as TMDb actually returns them (e.g. "Science Fiction", not
+// "sci-fi") — the matcher tests against MediaItem.genre/.genres, which come
+// straight from TMDb's own genre list, so it has to match TMDb's naming, not
+// the query's casual phrasing.
+const EXCLUDABLE_GENRES: Array<{ label: string; triggerTerm: string; matcher: RegExp }> = [
+  { label: "Horror", triggerTerm: "horror|scary", matcher: /horror/i },
+  { label: "Comedy", triggerTerm: "comed(?:y|ies)|funny", matcher: /comedy/i },
+  { label: "Romance", triggerTerm: "romance|romantic", matcher: /romance/i },
+  { label: "Action", triggerTerm: "action", matcher: /action/i },
+  { label: "Thriller", triggerTerm: "thrillers?", matcher: /thriller/i },
+  { label: "Drama", triggerTerm: "dramas?", matcher: /drama/i },
+  { label: "Documentary", triggerTerm: "documentar(?:y|ies)", matcher: /documentary/i },
+  { label: "Animation", triggerTerm: "animation|animated", matcher: /animation/i },
+  { label: "Sci-Fi", triggerTerm: "sci[- ]?fi|science fiction", matcher: /sci-fi|science fiction/i },
+  { label: "War", triggerTerm: "war", matcher: /\bwar\b/i },
+  { label: "Crime", triggerTerm: "crime", matcher: /crime/i },
+  { label: "Mystery", triggerTerm: "myster(?:y|ies)", matcher: /mystery/i },
+  { label: "Western", triggerTerm: "westerns?", matcher: /western/i },
+  { label: "Fantasy", triggerTerm: "fantasy", matcher: /fantasy/i },
+  { label: "Musical", triggerTerm: "musicals?", matcher: /music/i },
+];
+const NEGATION_PREFIX = "(?:not|no|non-?|avoid|skip|without|nothing)\\s+(?:a\\s+|an\\s+|any\\s+)?";
+
+function parseExcludedGenres(query: string): ExcludedGenre[] {
+  return EXCLUDABLE_GENRES
+    .filter((genre) => new RegExp(`\\b${NEGATION_PREFIX}(?:${genre.triggerTerm})\\b`, "i").test(query))
+    .map((genre) => ({ label: genre.label, matcher: genre.matcher }));
+}
+
+// Provider ids verified live against TMDb's /watch/providers/movie list
+// (watch_region=US) rather than assumed — some services list several SKUs
+// (e.g. Paramount+ has separate "Essential"/"Premium" tiers); the id picked
+// here is the general-availability flatrate entry.
+const WATCH_PROVIDERS: Array<{ id: number; name: string; terms: RegExp }> = [
+  { id: 8, name: "Netflix", terms: /\bon\s+netflix\b/i },
+  { id: 15, name: "Hulu", terms: /\bon\s+hulu\b/i },
+  { id: 337, name: "Disney+", terms: /\bon\s+disney\s*\+?(?:\s+plus)?\b/i },
+  { id: 9, name: "Prime Video", terms: /\bon\s+(?:amazon\s+)?prime(?:\s+video)?\b/i },
+  { id: 1899, name: "Max", terms: /\bon\s+(?:hbo\s+)?max\b/i },
+  { id: 350, name: "Apple TV+", terms: /\bon\s+apple\s*tv\s*\+?(?:\s+plus)?\b/i },
+  { id: 386, name: "Peacock", terms: /\bon\s+peacock\b/i },
+  { id: 2303, name: "Paramount+", terms: /\bon\s+paramount\s*\+?(?:\s+plus)?\b/i },
+];
+
+function parseWatchProvider(query: string): WatchProviderIntent | null {
+  const match = WATCH_PROVIDERS.find((provider) => provider.terms.test(query));
+  return match ? { id: match.id, name: match.name } : null;
+}
+
 export function parseSearchIntent(query: string): SearchIntent {
   const mediaType = TV_WORDS.test(query) ? "tv" : MOVIE_WORDS.test(query) ? "movie" : null;
   const recency = THIS_YEAR_WORDS.test(query) ? "this-year" : RECENT_WORDS.test(query) ? "recent" : null;
@@ -35,6 +88,8 @@ export function parseSearchIntent(query: string): SearchIntent {
   const hoursMatch = query.match(UNDER_HOURS_PATTERN);
   const minutesMatch = query.match(UNDER_MINUTES_PATTERN);
   const runtimeUnderMinutes = hoursMatch ? Math.round(Number(hoursMatch[1]) * 60) : minutesMatch ? Number(minutesMatch[1]) : null;
+  const excludedGenres = parseExcludedGenres(query);
+  const watchProvider = parseWatchProvider(query);
 
-  return { mediaType, recency, referencedTitle, usePersonalHistory, runtimeUnderMinutes };
+  return { mediaType, recency, referencedTitle, usePersonalHistory, runtimeUnderMinutes, excludedGenres, watchProvider };
 }

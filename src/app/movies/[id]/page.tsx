@@ -4,6 +4,7 @@ import { Film, Star } from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { CatalogError } from "@/components/catalog-state";
 import { MovieRail } from "@/components/movie-rail";
+import { RatingControl } from "@/components/rating-control";
 import { SiteHeader } from "@/components/site-header";
 import { TrailerButton } from "@/components/trailer-button";
 import { WatchProvidersSection } from "@/components/watch-providers";
@@ -11,6 +12,7 @@ import { WatchlistButton } from "@/components/watchlist-button";
 import { WhyWatch } from "@/components/why-watch";
 import { getInitialWhyWatchState } from "@/lib/why-watch-actions";
 import { filterReleaseTimeline, formatFullDate, formatRuntime } from "@/lib/format";
+import { getRating } from "@/lib/ratings";
 import { getMovieDetails, isTmdbNotFound } from "@/lib/tmdb";
 import { isInWatchlist } from "@/lib/watchlist";
 
@@ -48,9 +50,10 @@ export default async function MoviePage({ params }: { params: Promise<{ id: stri
 
   if (!movie) return <main className="pb-24"><SiteHeader /><CatalogError /></main>;
 
-  const [whyWatchState, inWatchlist] = await Promise.all([
+  const [whyWatchState, inWatchlist, rating] = await Promise.all([
     getInitialWhyWatchState(movie),
     isInWatchlist("movie", movie.id),
+    getRating("movie", movie.id),
   ]);
 
   const infoRows = [
@@ -82,6 +85,7 @@ export default async function MoviePage({ params }: { params: Promise<{ id: stri
             title={movie.title}
             tmdbId={movie.id}
           />
+          <RatingControl mediaType="movie" rating={rating} title={movie.title} tmdbId={movie.id} />
         </div>
       </div>
     </article>

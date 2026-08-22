@@ -70,7 +70,7 @@ function HeroReasonCard({ reason, references }: { reason: WhyWatchReason; refere
     </div>
     {examples.length > 0 ? <div className="flex gap-3 overflow-x-auto min-[760px]:flex-1 min-[760px]:overflow-visible [scrollbar-width:none]">
       {examples.map((reference) => <Link
-        className="group w-20 flex-none min-[760px]:w-auto min-[760px]:flex-1"
+        className="group w-20 min-w-0 flex-none min-[760px]:w-auto min-[760px]:flex-1"
         href={reference.mediaType === "tv" ? `/tv/${reference.id}` : `/movies/${reference.id}`}
         key={reference.id}
         prefetch={false}
@@ -92,8 +92,8 @@ export function WhyWatch({ id, mediaType, initialState }: { id: number; mediaTyp
   if (state.status === "rated") {
     return <section className="page-width mt-10">
       <div className="rounded-2xl border border-line bg-soft px-6 py-5">
-        <h2 className="m-0 text-[20px] font-[650] tracking-[-0.02em]">Your rating</h2>
-        <p className="mb-0 mt-2 text-sm text-muted">You rated this {state.rating}/10, so it is not treated as a new recommendation.</p>
+        <h2 className="m-0 text-[20px] font-[650] tracking-[-0.02em]">Already rated</h2>
+        <p className="mb-0 mt-2 text-sm text-muted">You gave {state.title} {state.rating}/10. This rating now contributes to your taste profile and future predictions.</p>
       </div>
     </section>;
   }
@@ -113,7 +113,7 @@ export function WhyWatch({ id, mediaType, initialState }: { id: number; mediaTyp
         {insight && !state.explanation ? <form className="flex flex-wrap gap-2" action={formAction}>
           <input name="id" type="hidden" value={id} />
           <input name="mediaType" type="hidden" value={mediaType} />
-          <ActionButton>Explain in detail</ActionButton>
+          <ActionButton>Tell me more</ActionButton>
         </form> : null}
       </div>
 

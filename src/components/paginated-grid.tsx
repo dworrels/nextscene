@@ -1,10 +1,19 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { MovieGrid } from "@/components/movie-grid";
 import type { MediaItem, PagedResult } from "@/types/tmdb";
 
 const BATCH_SIZE = 32;
+const STATE_TTL_MS = 30 * 60 * 1000;
+
+type GridSnapshot = {
+  items: MediaItem[];
+  buffer: MediaItem[];
+  page: number;
+  totalPages: number;
+  savedAt: number;
+};
 
 function dedupeItems(items: MediaItem[]): MediaItem[] {
   const seen = new Set<string>();
@@ -18,21 +27,40 @@ function dedupeItems(items: MediaItem[]): MediaItem[] {
   return deduped;
 }
 
+function readSnapshot(stateKey: string | undefined): GridSnapshot | null {
+  if (!stateKey || typeof window === "undefined") return null;
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(`nextscene-grid:${stateKey}`) ?? "null") as GridSnapshot | null;
+    if (!value || !Array.isArray(value.items) || !Array.isArray(value.buffer) || typeof value.page !== "number" || typeof value.totalPages !== "number" || typeof value.savedAt !== "number") return null;
+    return Date.now() - value.savedAt < STATE_TTL_MS ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export function PaginatedGrid({
   initialPage,
   loadMore,
+  stateKey,
 }: {
   initialPage: PagedResult<MediaItem>;
   loadMore: (page: number) => Promise<PagedResult<MediaItem>>;
+  stateKey?: string;
 }) {
   const initialItems = dedupeItems(initialPage.items);
-  const [items, setItems] = useState(initialItems.slice(0, BATCH_SIZE));
-  const [buffer, setBuffer] = useState(initialItems.slice(BATCH_SIZE));
-  const [page, setPage] = useState(initialPage.page);
-  const [totalPages, setTotalPages] = useState(initialPage.totalPages);
+  const [snapshot] = useState(() => readSnapshot(stateKey));
+  const [items, setItems] = useState(() => snapshot?.items ?? initialItems.slice(0, BATCH_SIZE));
+  const [buffer, setBuffer] = useState(() => snapshot?.buffer ?? initialItems.slice(BATCH_SIZE));
+  const [page, setPage] = useState(() => snapshot?.page ?? initialPage.page);
+  const [totalPages, setTotalPages] = useState(() => snapshot?.totalPages ?? initialPage.totalPages);
   const [error, setError] = useState(false);
   const [isPending, startTransition] = useTransition();
   const done = buffer.length === 0 && page >= totalPages;
+
+  useEffect(() => {
+    if (!stateKey) return;
+    window.sessionStorage.setItem(`nextscene-grid:${stateKey}`, JSON.stringify({ items, buffer, page, totalPages, savedAt: Date.now() } satisfies GridSnapshot));
+  }, [buffer, items, page, stateKey, totalPages]);
 
   function fetchNextPage() {
     if (isPending || done) return;

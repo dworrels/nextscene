@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { clearRatings, importCsv, mergeRatings, updateRatingRow, writeRatings } from "@/lib/ratings";
+import { clearRatings, importCsv, mergeRatings, rateMedia, unrateMedia, updateRatingRow, writeRatings } from "@/lib/ratings";
 import { getMovieTitle, getTvShowName, isTmdbNotFound, searchMovieId, searchTvId } from "@/lib/tmdb";
+import type { MediaType } from "@/types/tmdb";
 
 export type ImportState = { status: "idle" | "error"; message?: string };
 export type RepairState = { status: "idle" | "error"; message?: string };
@@ -43,6 +44,25 @@ export async function importRatingsAction(_prevState: ImportState, formData: For
 
 export async function deleteRatingsAction(): Promise<void> {
   await clearRatings();
+  revalidatePath("/", "layout");
+}
+
+// Backs RatingControl on movie/tv detail pages — rates a title in-app
+// (whether it's new or already carries an imported IMDb rating). A missing
+// or zero rating clears any existing one instead, so clicking the currently
+// selected star un-rates a title.
+export async function rateMediaAction(formData: FormData): Promise<void> {
+  const mediaType: MediaType = String(formData.get("mediaType")) === "tv" ? "tv" : "movie";
+  const tmdbId = Number(formData.get("tmdbId"));
+  const title = String(formData.get("title") ?? "");
+  if (!Number.isInteger(tmdbId) || tmdbId < 1 || !title) return;
+
+  const rating = Number(formData.get("rating"));
+  if (formData.get("rating") === null || !Number.isInteger(rating) || rating < 1 || rating > 10) {
+    await unrateMedia(mediaType, tmdbId);
+  } else {
+    await rateMedia({ mediaType, tmdbId, title, rating });
+  }
   revalidatePath("/", "layout");
 }
 

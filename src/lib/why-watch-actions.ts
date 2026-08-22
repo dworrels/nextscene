@@ -10,6 +10,7 @@ export type WhyWatchState = {
   status: "idle" | "ready" | "rated" | "empty" | "error";
   insight?: WhyWatchInsight;
   explanation?: string;
+  title?: string;
   rating?: number;
   message?: string;
 };
@@ -24,7 +25,7 @@ export async function getInitialWhyWatchState(item: MediaItem): Promise<WhyWatch
   try {
     const { rows } = await readRatings();
     const rating = rows.find((row) => row.tmdbId === item.id && row.mediaType === item.mediaType)?.rating;
-    if (rating !== undefined) return { status: "rated", rating };
+    if (rating !== undefined) return { status: "rated", title: item.title, rating };
 
     const insight = await getWhyWatchInsight(item);
     if (!insight) return { status: "empty", message: "Import more matched ratings to build a personal explanation." };

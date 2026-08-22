@@ -47,19 +47,13 @@ export async function importWatchlistAction(_prevState: ImportState, formData: F
 
   const merged = await mergeWatchlist(actionableRows);
   await writeWatchlist(merged);
-  revalidatePath("/");
-  revalidatePath("/what-to-watch");
-  revalidatePath("/watchlist");
-  revalidatePath("/watchlist/review");
+  revalidatePath("/", "layout");
   return { status: "idle" };
 }
 
 export async function deleteWatchlistAction(): Promise<void> {
   await clearWatchlist();
-  revalidatePath("/");
-  revalidatePath("/what-to-watch");
-  revalidatePath("/watchlist");
-  revalidatePath("/watchlist/review");
+  revalidatePath("/", "layout");
 }
 
 export async function toggleWatchlistAction(formData: FormData): Promise<void> {
@@ -89,11 +83,7 @@ export async function toggleWatchlistAction(formData: FormData): Promise<void> {
     }];
 
   await writeWatchlist({ rows, importedAt: data.importedAt || new Date().toISOString() });
-  revalidatePath("/");
-  revalidatePath("/what-to-watch");
-  revalidatePath("/watchlist");
-  revalidatePath("/watchlist/review");
-  revalidatePath(mediaType === "tv" ? `/tv/${tmdbId}` : `/movies/${tmdbId}`);
+  revalidatePath("/", "layout");
 }
 
 async function tmdbIdExists(id: number, mediaType: "movie" | "tv"): Promise<boolean> {
@@ -124,10 +114,7 @@ export async function repairWatchlistRowAction(_prevState: RepairState, formData
     if (tmdbId === null) return { status: "error", message: "No match found. Try a different title or TMDb ID." };
 
     await updateWatchlistRow(imdbId, tmdbId);
-    revalidatePath("/");
-    revalidatePath("/what-to-watch");
-    revalidatePath("/watchlist");
-    revalidatePath("/watchlist/review");
+    revalidatePath("/", "layout");
     return { status: "idle" };
   } catch {
     return { status: "error", message: "Something went wrong. Try again." };

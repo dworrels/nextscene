@@ -29,7 +29,7 @@ export default async function WhatToWatchCategoryPage({ params }: { params: Prom
   return <main className="pb-24">
     <SiteHeader />
     <section className="page-width pt-[84px] max-[760px]:pt-11 pb-10">
-      <BackButton className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-soft text-ink hover:bg-line" fallbackHref="/what-to-watch" ariaLabel="Back to What to Watch" />
+      <BackButton className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-soft text-ink hover:bg-line" fallbackHref="/what-to-watch" ariaLabel="Back to What to Watch" mode="parent" />
       <h1 className="m-0 text-[clamp(36px,5vw,60px)] font-bold leading-[0.98] tracking-[-0.02em]">{category.title}</h1>
       {rail?.items.length ? <p className="mt-4 text-sm text-muted">{rail.items.length} personalized title{rail.items.length === 1 ? "" : "s"}.</p> : null}
     </section>
@@ -40,7 +40,7 @@ export default async function WhatToWatchCategoryPage({ params }: { params: Prom
         : rail === null
           ? <p className="text-sm text-muted">Import ratings to build this category.</p>
           : rail.items.length > 0
-            ? <ProgressiveMovieGrid items={rail.items} predictedBadges={rail.predictedBadges} />
+            ? <ProgressiveMovieGrid items={rail.items} predictedBadges={rail.predictedBadges} stateKey={`what-to-watch:${category.key}`} />
             : <p className="text-sm text-muted">No additional titles are available in this category right now.</p>}
     </section>
   </main>;

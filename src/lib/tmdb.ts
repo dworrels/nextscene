@@ -633,6 +633,57 @@ export async function findTvParentByEpisodeImdbId(imdbId: string): Promise<numbe
   return response.tv_episode_results?.[0]?.show_id ?? null;
 }
 
+// Shared between ratings.ts and watchlist.ts, whose IMDb CSV exports use the
+// same human-readable "Title Type" labels.
+const TV_TITLE_TYPES = new Set([
+  "tv series", "tv mini series", "tv special", "tv episode", "tv short",
+  "tvseries", "tvminiseries", "tvspecial", "tvepisode", "tvshort",
+]);
+const EPISODE_TITLE_TYPES = new Set(["tv episode", "tvepisode"]);
+
+export function normalizedTitleType(titleType: string): string {
+  return titleType.trim().toLowerCase();
+}
+
+export function mediaTypeFromTitleType(titleType: string): MediaType {
+  return TV_TITLE_TYPES.has(normalizedTitleType(titleType)) ? "tv" : "movie";
+}
+
+export function isEpisodeTitleType(titleType: string): boolean {
+  return EPISODE_TITLE_TYPES.has(normalizedTitleType(titleType));
+}
+
+// IMDb's "Title Type" label doesn't reliably predict which TMDb catalog
+// actually holds a title — stand-up specials, for instance, are typed
+// "tvSpecial" on IMDb but catalogued as movies on TMDb. This tries the
+// type-indicated catalog first, then falls back to the other one, so a
+// title still resolves whenever TMDb has it at all, just filed differently
+// than IMDb's label suggests. Episodes resolve to their parent show instead,
+// since only the show is a recommendable/ratable unit here.
+export async function resolveImdbTitle(imdbId: string, isEpisode: boolean, preferTv: boolean): Promise<{ tmdbId: number; mediaType: MediaType } | null> {
+  if (isEpisode) {
+    const showId = await findTvParentByEpisodeImdbId(imdbId).catch(() => null);
+    if (showId !== null) return { tmdbId: showId, mediaType: "tv" };
+  }
+
+  const primaryId = await (preferTv ? findTvByImdbId(imdbId) : findMovieByImdbId(imdbId)).catch(() => null);
+  if (primaryId !== null) return { tmdbId: primaryId, mediaType: preferTv ? "tv" : "movie" };
+
+  const secondaryId = await (preferTv ? findMovieByImdbId(imdbId) : findTvByImdbId(imdbId)).catch(() => null);
+  if (secondaryId !== null) return { tmdbId: secondaryId, mediaType: preferTv ? "movie" : "tv" };
+
+  // Last resort: both direct catalog lookups failed, so the id might belong
+  // to an episode whose title type wasn't recognized as one (an unfamiliar
+  // export label, for instance). Only worth the extra request once the
+  // cheaper paths are already exhausted.
+  if (!isEpisode) {
+    const showId = await findTvParentByEpisodeImdbId(imdbId).catch(() => null);
+    if (showId !== null) return { tmdbId: showId, mediaType: "tv" };
+  }
+
+  return null;
+}
+
 export async function searchTvId(query: string): Promise<number | null> {
   const response = await requestTmdb<{ results: Array<{ id: number }> }>("search/tv", { query });
   return response.results[0]?.id ?? null;
@@ -833,6 +884,32 @@ export async function discoverMoviesUnderRuntime(maxMinutes: number, page = 1) {
   ]);
   const genres = new Map(genreResponse.genres.map((genre) => [genre.id, genre.name]));
   return toPagedResult(response, prioritizeMediaItems(mapMovies(response, configuration, genres), preferences));
+}
+
+// with_watch_providers only returns titles verified as actually available
+// from that provider in watch_region — unlike the general popular/top-rated
+// pools, which carry no provider data at all, so a "flatrate"-only filter
+// here would let unverified titles through under a false "on Netflix" claim.
+export async function discoverMoviesByProvider(providerId: number, page = 1) {
+  const [configuration, genreResponse, response, preferences] = await Promise.all([
+    requestTmdb<TmdbConfiguration>("configuration"),
+    requestTmdb<TmdbGenresResponse>("genre/movie/list"),
+    requestTmdb<TmdbListResponse>("discover/movie", { sort_by: "popularity.desc", "vote_count.gte": "20", with_watch_providers: String(providerId), watch_region: DEFAULT_REGION, page: String(page) }),
+    readContentPreferences(),
+  ]);
+  const genres = new Map(genreResponse.genres.map((genre) => [genre.id, genre.name]));
+  return toPagedResult(response, prioritizeMediaItems(mapMovies(response, configuration, genres), preferences));
+}
+
+export async function discoverTvByProvider(providerId: number, page = 1) {
+  const [configuration, genreResponse, response, preferences] = await Promise.all([
+    requestTmdb<TmdbConfiguration>("configuration"),
+    requestTmdb<TmdbGenresResponse>("genre/tv/list"),
+    requestTmdb<TmdbTvListResponse>("discover/tv", { sort_by: "popularity.desc", "vote_count.gte": "20", with_watch_providers: String(providerId), watch_region: DEFAULT_REGION, page: String(page) }),
+    readContentPreferences(),
+  ]);
+  const genres = new Map(genreResponse.genres.map((genre) => [genre.id, genre.name]));
+  return toPagedResult(response, prioritizeMediaItems(mapTvShows(response, configuration, genres), preferences));
 }
 
 export async function discoverMoviesByFeatures(features: DiscoverFeature[], page = 1) {

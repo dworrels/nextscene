@@ -1,14 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MovieGrid } from "@/components/movie-grid";
 import type { MediaItem } from "@/types/tmdb";
 
 const BATCH_SIZE = 24;
+const STATE_TTL_MS = 30 * 60 * 1000;
 
-export function ProgressiveMovieGrid({ items, predictedBadges }: { items: MediaItem[]; predictedBadges?: Record<string, string> }) {
-  const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
+function readVisibleCount(stateKey: string | undefined): number | null {
+  if (!stateKey || typeof window === "undefined") return null;
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(`nextscene-progressive-grid:${stateKey}`) ?? "null") as { visibleCount?: unknown; savedAt?: unknown } | null;
+    return value && typeof value.visibleCount === "number" && typeof value.savedAt === "number" && Date.now() - value.savedAt < STATE_TTL_MS
+      ? value.visibleCount
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function ProgressiveMovieGrid({ items, predictedBadges, stateKey }: { items: MediaItem[]; predictedBadges?: Record<string, string>; stateKey?: string }) {
+  const [visibleCount, setVisibleCount] = useState(() => Math.min(readVisibleCount(stateKey) ?? BATCH_SIZE, items.length));
   const visibleItems = items.slice(0, visibleCount);
+
+  useEffect(() => {
+    if (!stateKey) return;
+    window.sessionStorage.setItem(`nextscene-progressive-grid:${stateKey}`, JSON.stringify({ visibleCount, savedAt: Date.now() }));
+  }, [stateKey, visibleCount]);
 
   return <>
     <MovieGrid movies={visibleItems} predictedBadges={predictedBadges} />

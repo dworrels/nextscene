@@ -46,7 +46,7 @@ export default async function MovieRecommendationsPage({ params }: { params: Pro
   return <main className="pb-24">
     <SiteHeader />
     <section className="page-width pt-[84px] max-[760px]:pt-11 pb-10">
-      <BackButton className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-soft text-ink hover:bg-line" fallbackHref={`/movies/${movieId}`} ariaLabel={`Back to ${title}`} />
+      <BackButton className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-soft text-ink hover:bg-line" fallbackHref={`/movies/${movieId}`} ariaLabel={`Back to ${title}`} mode="parent" />
       <h1 className="m-0 text-[clamp(36px,5vw,60px)] font-bold leading-[0.98] tracking-[-0.02em]">Related</h1>
       <p className="mt-3 text-lg font-medium text-muted">{title}</p>
     </section>

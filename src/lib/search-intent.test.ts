@@ -27,4 +27,22 @@ describe("parseSearchIntent", () => {
   it("leaves the runtime constraint null when none is mentioned", () => {
     expect(parseSearchIntent("a dark mystery").runtimeUnderMinutes).toBeNull();
   });
+
+  it("detects an excluded genre from negated phrasing", () => {
+    expect(parseSearchIntent("something fun, no horror").excludedGenres.map((genre) => genre.label)).toEqual(["Horror"]);
+    expect(parseSearchIntent("a good movie, not a documentary").excludedGenres.map((genre) => genre.label)).toEqual(["Documentary"]);
+    expect(parseSearchIntent("a comedy").excludedGenres).toEqual([]);
+  });
+
+  it("matches an excluded genre's TMDb name, not just the trigger word", () => {
+    const [excluded] = parseSearchIntent("no sci-fi").excludedGenres;
+    expect(excluded.matcher.test("Science Fiction")).toBe(true);
+    expect(excluded.matcher.test("Comedy")).toBe(false);
+  });
+
+  it("detects a mentioned streaming service", () => {
+    expect(parseSearchIntent("something on netflix").watchProvider).toEqual({ id: 8, name: "Netflix" });
+    expect(parseSearchIntent("great shows on Hulu").watchProvider).toEqual({ id: 15, name: "Hulu" });
+    expect(parseSearchIntent("a dark mystery").watchProvider).toBeNull();
+  });
 });

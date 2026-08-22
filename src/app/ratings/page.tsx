@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { BackButton } from "@/components/back-button";
 import { CatalogError } from "@/components/catalog-state";
 import { FilmCard } from "@/components/film-card";
@@ -15,7 +14,6 @@ export const metadata: Metadata = { title: "Your Ratings — NextScene" };
 export default async function RatingsPage() {
   const { rows } = await readRatings();
   const matched = rows.filter((row) => row.tmdbId !== null).sort((a, b) => b.rating - a.rating);
-  const unmatched = rows.filter((row) => row.tmdbId === null);
 
   const cards = matched.length > 0
     ? await getMediaCards(matched.map((row) => ({ id: row.tmdbId as number, mediaType: row.mediaType }))).catch(() => null)
@@ -25,13 +23,8 @@ export default async function RatingsPage() {
     <SiteHeader />
     <section className="page-width pt-[84px] max-[760px]:pt-11 pb-10">
       <BackButton className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-soft text-ink hover:bg-line" fallbackHref="/" ariaLabel="Go back" />
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="m-0 text-[clamp(36px,5vw,60px)] font-bold leading-[0.98] tracking-[-0.02em]">Your Ratings</h1>
-          {matched.length > 0 ? <p className="mt-4 text-sm text-muted">{matched.length} rated title{matched.length === 1 ? "" : "s"}, highest rated first.</p> : null}
-        </div>
-        {unmatched.length > 0 ? <Link className="inline-flex min-h-11 items-center rounded-full border border-line px-5 py-2 text-xs font-semibold text-ink hover:bg-soft" href="/ratings/review">{unmatched.length} need review</Link> : null}
-      </div>
+      <h1 className="m-0 text-[clamp(36px,5vw,60px)] font-bold leading-[0.98] tracking-[-0.02em]">Your Ratings</h1>
+      {matched.length > 0 ? <p className="mt-4 text-sm text-muted">{matched.length} rated title{matched.length === 1 ? "" : "s"}, highest rated first.</p> : null}
     </section>
 
     <section className="page-width">

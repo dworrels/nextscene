@@ -42,7 +42,7 @@ export default async function SeasonPage({ params }: { params: Promise<{ id: str
   return <main className="pb-24">
     <SiteHeader />
     <section className="page-width pt-[84px] max-[760px]:pt-11 pb-[38px] max-[760px]:pb-[25px]">
-      <BackButton className="mb-6 inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-soft text-ink hover:bg-line" fallbackHref={`/tv/${parsed.showId}`} ariaLabel={`Back to ${seasonDetail.showName}`} />
+      <BackButton className="mb-6 inline-flex h-9 w-9 items-center justify-center rounded-full border border-line bg-soft text-ink hover:bg-line" fallbackHref={`/tv/${parsed.showId}`} ariaLabel={`Back to ${seasonDetail.showName}`} mode="parent" />
       <div className="flex gap-6 max-[760px]:flex-col">
         {seasonDetail.posterUrl ? <div className="aspect-[0.68] w-[180px] flex-none overflow-hidden rounded-xl bg-soft max-[760px]:w-[140px]">
           <div className="h-full w-full bg-cover bg-center" style={{ backgroundImage: `url(${seasonDetail.posterUrl})` }} />

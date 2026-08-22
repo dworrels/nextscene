@@ -7,15 +7,18 @@ type BackButtonProps = {
   fallbackHref: string;
   ariaLabel: string;
   className: string;
+  mode?: "history" | "parent";
 };
 
-// A direct visit may not have an in-app history entry. In that case the
-// supplied parent/home route is safer than leaving the user on a blank tab.
-export function BackButton({ fallbackHref, ariaLabel, className }: BackButtonProps) {
+// Child pages use `parent` so their labelled destination is reliable even
+// when the page was opened directly or from outside the app. Top-level and
+// discovery pages preserve the user's actual browsing history instead.
+export function BackButton({ fallbackHref, ariaLabel, className, mode = "history" }: BackButtonProps) {
   const router = useRouter();
 
   function goBack() {
-    if (window.history.length > 1) router.back();
+    if (mode === "parent") router.replace(fallbackHref);
+    else if (window.history.length > 1) router.back();
     else router.push(fallbackHref);
   }
 

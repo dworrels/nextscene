@@ -3,6 +3,7 @@
 import { CircleUser, Moon, Search, Sun } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { Logo } from "@/components/icons";
 
 type Theme = "light" | "dark";
 
@@ -42,30 +43,31 @@ function ProfileMenu() {
       <Link className="flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-ink hover:bg-soft" href="/what-to-watch" role="menuitem" onClick={() => setOpen(false)}>What to Watch</Link>
       <Link className="flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-ink hover:bg-soft" href="/ratings" role="menuitem" onClick={() => setOpen(false)}>Ratings</Link>
       <Link className="flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-ink hover:bg-soft" href="/watchlist" role="menuitem" onClick={() => setOpen(false)}>Watchlist</Link>
-      <Link className="flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-ink hover:bg-soft" href="/preferences" role="menuitem" onClick={() => setOpen(false)}>Preferences</Link>
+      <Link className="flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-ink hover:bg-soft" href="/settings" role="menuitem" onClick={() => setOpen(false)}>Settings</Link>
     </div> : null}
   </div>;
 }
 
-export function AppHeader({ theme, onThemeToggle, onSearchOpen }: { theme: Theme; onThemeToggle: () => void; onSearchOpen: () => void }) {
+export function AppHeader({ theme, onThemeToggle, onSearchOpen, showSearch = true }: { theme: Theme; onThemeToggle: () => void; onSearchOpen: () => void; showSearch?: boolean }) {
   const isDark = theme === "dark";
 
   return <div className="bg-bg">
     <header className="page-width grid h-16 grid-cols-[1fr_auto_1fr] items-center gap-2.5 max-[760px]:h-14 max-[480px]:gap-1.5">
       <div className="flex min-w-0 items-center">
-        <Link className="inline-flex flex-none items-center whitespace-nowrap text-base font-semibold tracking-[-0.02em] text-ink" href="/" aria-label="NextScene home">
+        <Link className="inline-flex flex-none items-center gap-2 whitespace-nowrap text-base font-semibold tracking-[-0.02em] text-ink" href="/" aria-label="NextScene home">
+          <Logo className="h-9 w-12 flex-none" />
           <span>NextScene</span>
         </Link>
       </div>
       <ProfileMenu />
       <div className="flex min-w-0 items-center justify-end gap-2.5 max-[480px]:gap-1.5">
-        <button
+        {showSearch ? <button
           className="flex min-h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full border border-line bg-soft px-4 py-2 text-left text-sm text-muted hover:text-ink max-w-[260px] max-[760px]:max-w-none max-[480px]:hidden"
           onClick={onSearchOpen}
         >
           <Search className="h-4 w-4 flex-none" strokeWidth={1.8} aria-hidden="true" />
           <span className="truncate">Search movies and TV shows…</span>
-        </button>
+        </button> : null}
         <button
           className="grid h-11 w-11 flex-none place-items-center rounded-full border-0 bg-transparent text-ink hover:bg-soft"
           onClick={onThemeToggle}
@@ -80,13 +82,13 @@ export function AppHeader({ theme, onThemeToggle, onSearchOpen }: { theme: Theme
         instead of collapsing to a bare icon indistinguishable from the
         profile/theme buttons. */}
     <div className="page-width hidden pb-3 max-[480px]:block">
-      <button
+      {showSearch ? <button
         className="flex h-11 w-full items-center gap-2.5 rounded-full border border-line bg-soft px-4 text-left text-sm text-muted hover:text-ink"
         onClick={onSearchOpen}
       >
         <Search className="h-4 w-4 flex-none" strokeWidth={1.8} aria-hidden="true" />
         <span className="truncate">Search movies and TV shows…</span>
-      </button>
+      </button> : null}
     </div>
   </div>;
 }

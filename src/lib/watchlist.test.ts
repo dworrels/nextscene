@@ -1,13 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// resolveImdbTitle and getTvShowName are the only tmdb.ts functions
+// watchlist.ts calls, so those are the mock boundary — mocking the lower-level
+// find* functions doesn't work here since resolveImdbTitle calls them from
+// within the same module, bypassing any mock of tmdb.ts's exports. The
+// title-type classifiers stay real (plain, side-effect-free) via the spread.
 const tmdb = vi.hoisted(() => ({
-  findMovieByImdbId: vi.fn(),
-  findTvByImdbId: vi.fn(),
-  findTvParentByEpisodeImdbId: vi.fn(),
+  resolveImdbTitle: vi.fn(),
   getTvShowName: vi.fn(),
 }));
 
-vi.mock("@/lib/tmdb", () => tmdb);
+vi.mock("@/lib/tmdb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/tmdb")>();
+  return { ...actual, ...tmdb };
+});
 
 import { importCsv } from "./watchlist";
 
@@ -16,9 +22,7 @@ const header = "Const,Title,Title Type,Created,Release Date,Your Rating";
 describe("watchlist import", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    tmdb.findMovieByImdbId.mockResolvedValue(101);
-    tmdb.findTvByImdbId.mockResolvedValue(202);
-    tmdb.findTvParentByEpisodeImdbId.mockResolvedValue(303);
+    tmdb.resolveImdbTitle.mockResolvedValue({ tmdbId: 101, mediaType: "movie" });
     tmdb.getTvShowName.mockResolvedValue("Parent Show");
   });
 
@@ -38,6 +42,7 @@ describe("watchlist import", () => {
   });
 
   it("omits rated and non-screen entries, and maps an episode to its parent show", async () => {
+    tmdb.resolveImdbTitle.mockResolvedValue({ tmdbId: 303, mediaType: "tv" });
     const rows = await importCsv([
       header,
       "tt-rated,Already Watched,Movie,2026-01-01,2025-01-01,9",
@@ -52,7 +57,21 @@ describe("watchlist import", () => {
       title: "Parent Show",
       resolvedFromEpisode: true,
     })]);
-    expect(tmdb.findTvParentByEpisodeImdbId).toHaveBeenCalledWith("tt-episode");
-    expect(tmdb.findMovieByImdbId).not.toHaveBeenCalledWith("tt-game");
+    expect(tmdb.resolveImdbTitle).toHaveBeenCalledWith("tt-episode", true, true);
+    expect(tmdb.resolveImdbTitle).not.toHaveBeenCalledWith("tt-game", expect.anything(), expect.anything());
+  });
+
+  it("takes whatever media type resolveImdbTitle actually matched, even against the source Title Type", async () => {
+    // e.g. a "TV Special" that TMDb catalogs as a movie — resolveImdbTitle's
+    // own dual-catalog fallback (verified separately) is what finds this;
+    // this test only checks that watchlist.ts trusts the result it gets back.
+    tmdb.resolveImdbTitle.mockResolvedValue({ tmdbId: 101, mediaType: "movie" });
+    const rows = await importCsv([
+      header,
+      "tt-special,Stand-up Special,TV Special,2026-01-01,2026-01-01,",
+    ].join("\n"));
+
+    expect(rows).toEqual([expect.objectContaining({ imdbId: "tt-special", tmdbId: 101, mediaType: "movie" })]);
+    expect(tmdb.resolveImdbTitle).toHaveBeenCalledWith("tt-special", false, true);
   });
 });

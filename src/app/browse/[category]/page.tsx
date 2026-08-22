@@ -35,7 +35,7 @@ export default async function BrowseCategoryPage({ params }: { params: Promise<{
       {items === null
         ? <CatalogError />
         : items.items.length > 0
-          ? <PaginatedGrid initialPage={items} loadMore={browseCategory.bind(null, categoryKey)} />
+          ? <PaginatedGrid initialPage={items} loadMore={browseCategory.bind(null, categoryKey)} stateKey={`browse:${categoryKey}`} />
           : <p className="text-sm text-muted">No titles found in this category right now.</p>}
     </section>
   </main>;

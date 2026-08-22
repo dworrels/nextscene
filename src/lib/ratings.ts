@@ -1,6 +1,6 @@
 import path from "path";
 import { readJsonFile, writeJsonFileAtomic } from "@/lib/local-json";
-import { findMovieByImdbId, findTvByImdbId } from "@/lib/tmdb";
+import { isEpisodeTitleType, mediaTypeFromTitleType, resolveImdbTitle } from "@/lib/tmdb";
 import type { MediaType } from "@/types/tmdb";
 
 export type RatingRow = {
@@ -55,6 +55,43 @@ export async function updateRatingRow(imdbId: string, tmdbId: number | null): Pr
   await writeRatings(data);
 }
 
+export async function getRating(mediaType: MediaType, tmdbId: number): Promise<number | null> {
+  const { rows } = await readRatings();
+  return rows.find((row) => row.mediaType === mediaType && row.tmdbId === tmdbId)?.rating ?? null;
+}
+
+// Titles rated in-app (rather than imported from an IMDb export) have no
+// real IMDb ID to key on, so — like toggleWatchlistAction — a synthetic
+// `tmdb:{mediaType}:{tmdbId}` one is used instead. Matching by mediaType +
+// tmdbId (not imdbId) means re-rating a title already in the export also
+// updates that same row in place rather than creating a duplicate.
+export async function rateMedia(params: { mediaType: MediaType; tmdbId: number; title: string; rating: number }): Promise<void> {
+  const data = await readRatings();
+  const now = new Date().toISOString();
+  const index = data.rows.findIndex((row) => row.mediaType === params.mediaType && row.tmdbId === params.tmdbId);
+
+  if (index >= 0) {
+    data.rows[index] = { ...data.rows[index], rating: params.rating, ratedAt: now };
+  } else {
+    data.rows.push({
+      imdbId: `tmdb:${params.mediaType}:${params.tmdbId}`,
+      tmdbId: params.tmdbId,
+      mediaType: params.mediaType,
+      rating: params.rating,
+      title: params.title,
+      matchedAt: now,
+      ratedAt: now,
+    });
+  }
+  await writeRatings({ rows: data.rows, importedAt: data.importedAt || now });
+}
+
+export async function unrateMedia(mediaType: MediaType, tmdbId: number): Promise<void> {
+  const data = await readRatings();
+  const rows = data.rows.filter((row) => !(row.mediaType === mediaType && row.tmdbId === tmdbId));
+  await writeRatings({ ...data, rows });
+}
+
 // A fresh IMDb export is a full snapshot, so re-importing should replace the
 // rating/title/mediaType for every row from that snapshot. But a row that was
 // already matched — whether auto-matched last time or fixed by hand via the
@@ -98,21 +135,6 @@ function parseCsvLine(line: string): string[] {
   }
   fields.push(current);
   return fields;
-}
-
-// A "TV Movie" row lives in TMDb's movie catalog, not its TV catalog, so only
-// the series/episode-shaped title types are matched against find/{imdb_id}'s
-// tv_results. The ratings CSV export uses human-readable labels ("TV Series",
-// "TV Mini Series", ...), not the lowercase-camelCase title types from IMDb's
-// raw dataset — both are accepted here in case a differently-sourced CSV uses
-// the dataset form instead.
-const TV_TITLE_TYPES = new Set([
-  "tv series", "tv mini series", "tv special", "tv episode", "tv short",
-  "tvseries", "tvminiseries", "tvspecial", "tvepisode", "tvshort",
-]);
-
-function mediaTypeFromTitleType(titleType: string): MediaType {
-  return TV_TITLE_TYPES.has(titleType.trim().toLowerCase()) ? "tv" : "movie";
 }
 
 async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -162,15 +184,15 @@ export async function importCsv(text: string): Promise<RatingRow[]> {
 
   return mapWithConcurrency([...byImdbId.values()], 8, async (fields) => {
     const imdbId = fields[imdbIdColumn];
-    const mediaType = mediaTypeFromTitleType(fields[titleTypeColumn] || "");
-    const tmdbId = await (mediaType === "tv" ? findTvByImdbId(imdbId) : findMovieByImdbId(imdbId)).catch(() => null);
+    const sourceTitleType = fields[titleTypeColumn] || "";
+    const match = await resolveImdbTitle(imdbId, isEpisodeTitleType(sourceTitleType), mediaTypeFromTitleType(sourceTitleType) === "tv");
     return {
       imdbId,
-      tmdbId,
-      mediaType,
+      tmdbId: match?.tmdbId ?? null,
+      mediaType: match?.mediaType ?? mediaTypeFromTitleType(sourceTitleType),
       rating: Number(fields[ratingColumn]) || 0,
       title: (titleColumn === -1 ? "" : fields[titleColumn]) || imdbId,
-      matchedAt: tmdbId ? new Date().toISOString() : null,
+      matchedAt: match ? new Date().toISOString() : null,
       ratedAt: (dateRatedColumn === -1 ? "" : fields[dateRatedColumn]) || null,
     };
   });

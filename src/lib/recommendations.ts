@@ -23,9 +23,11 @@ import { extractVibeGenres } from "@/lib/vibe-search";
 import {
   discoverMoviesByFeatures,
   discoverMoviesByGenre,
+  discoverMoviesByProvider,
   discoverMoviesUnderRuntime,
   discoverTvByFeatures,
   discoverTvByGenre,
+  discoverTvByProvider,
   getMediaCards,
   getMovieRecommendations,
   getNowPlayingMovies,
@@ -80,7 +82,11 @@ type TasteProfile = { rated: RatedMedia[]; tasteVector: number[] | null; model: 
 type CandidateEntry = { item: MediaItem; source: RecommendationSource };
 type WhatToWatchResult = { hasRatings: boolean; ratingCount: number; rails: RecommendationRail[] };
 let tasteProfileCache: { key: string; promise: Promise<TasteProfile> } | null = null;
-let whatToWatchCache: { key: string; promise: Promise<WhatToWatchResult> } | null = null;
+let whatToWatchCache: { key: string; builtAt: number; promise: Promise<WhatToWatchResult> } | null = null;
+// Even with an unchanged profile, rebuild after this long so the ranking
+// pass re-runs against the current TMDb catalog — otherwise the same rails
+// would persist for as long as the server runs.
+const WHAT_TO_WATCH_TTL_MS = 24 * 60 * 60 * 1000;
 
 function mediaKey(item: Pick<MediaItem, "mediaType" | "id">): string {
   return `${item.mediaType}-${item.id}`;
@@ -317,6 +323,29 @@ export async function getRecentCandidateItems(mediaType: MediaType | null): Prom
 export async function getRuntimeCandidateItems(maxMinutes: number): Promise<MediaItem[]> {
   const known = await getKnownMediaKeys();
   const responses = await Promise.all([1, 2, 3].map((page) => discoverMoviesUnderRuntime(maxMinutes, page).catch(() => null)));
+  const seen = new Set<string>();
+  const pool: MediaItem[] = [];
+  for (const response of responses) {
+    for (const item of response?.items ?? []) {
+      const key = mediaKey(item);
+      if (known.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      pool.push(item);
+    }
+  }
+  return pool;
+}
+
+// Same reasoning as getRuntimeCandidateItems: sourced from TMDb's own
+// with_watch_providers filter rather than the general pool, since nothing in
+// that pool carries verified provider availability. Queries both movies and
+// TV unless a media type was already specified, since a provider mention
+// alone doesn't say which.
+export async function getWatchProviderCandidateItems(providerId: number, mediaType: MediaType | null): Promise<MediaItem[]> {
+  const known = await getKnownMediaKeys();
+  const movieCalls = mediaType === "tv" ? [] : [1, 2, 3].map((page) => discoverMoviesByProvider(providerId, page).catch(() => null));
+  const tvCalls = mediaType === "movie" ? [] : [1, 2, 3].map((page) => discoverTvByProvider(providerId, page).catch(() => null));
+  const responses = await Promise.all([...movieCalls, ...tvCalls]);
   const seen = new Set<string>();
   const pool: MediaItem[] = [];
   for (const response of responses) {
@@ -582,7 +611,8 @@ async function buildWhatToWatch(ratingRows: RatingRow[], watchlistRows: Watchlis
 
 // The result is expensive to derive (TMDb candidates, embeddings, and a
 // prediction pass), but depends only on the local profile. Reuse it until a
-// ratings, watchlist, or preference write changes that profile version.
+// ratings, watchlist, or preference write changes that profile version, or
+// WHAT_TO_WATCH_TTL_MS elapses — whichever comes first.
 export async function getWhatToWatch(): Promise<WhatToWatchResult> {
   const [{ rows: ratingRows }, { rows: watchlistRows }, preferences] = await Promise.all([
     readRatings(),
@@ -594,10 +624,11 @@ export async function getWhatToWatch(): Promise<WhatToWatchResult> {
     watchlist: watchlistRows.map((row) => [row.imdbId, row.tmdbId, row.mediaType, row.addedAt, row.status, row.matchedAt]),
     preferences,
   });
-  if (whatToWatchCache?.key === key) return whatToWatchCache.promise;
+  const fresh = whatToWatchCache?.key === key && Date.now() - whatToWatchCache.builtAt < WHAT_TO_WATCH_TTL_MS;
+  if (fresh && whatToWatchCache) return whatToWatchCache.promise;
 
   const promise = buildWhatToWatch(ratingRows, watchlistRows);
-  whatToWatchCache = { key, promise };
+  whatToWatchCache = { key, builtAt: Date.now(), promise };
   try {
     return await promise;
   } catch (error) {

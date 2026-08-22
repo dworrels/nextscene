@@ -12,6 +12,7 @@ import {
   getReferencedTitleRecommendations,
   getRuntimeCandidateItems,
   getSearchCandidatePool,
+  getWatchProviderCandidateItems,
   resolveReferencedTitle,
 } from "@/lib/recommendations";
 import { getMediaCards } from "@/lib/tmdb";
@@ -24,6 +25,7 @@ export type SemanticSearchState = {
   results: SemanticSearchResult[];
   message?: string;
   weakMatch?: boolean;
+  noResults?: boolean;
   appliedFilters?: string[];
 };
 
@@ -91,13 +93,21 @@ export async function semanticSearchAction(_prevState: SemanticSearchState, form
     if (query.toLowerCase() === "surprise me") return await surpriseMeResults(await getPersonalModel());
 
     const intent = parseSearchIntent(query);
+    if (intent.runtimeUnderMinutes && intent.mediaType === "tv") {
+      return {
+        status: "error",
+        results: [],
+        message: "Runtime filters are currently available for movies only — try removing the TV show filter.",
+      };
+    }
 
-    const [basePool, referencedItem, personalTasteVector, personalModel, runtimeItems] = await Promise.all([
+    const [basePool, referencedItem, personalTasteVector, personalModel, runtimeItems, watchProviderItems] = await Promise.all([
       getSearchCandidatePool(query),
       intent.referencedTitle ? resolveReferencedTitle(intent.referencedTitle, intent.mediaType) : Promise.resolve(null),
       intent.usePersonalHistory ? getPersonalTasteVector() : Promise.resolve(null),
       getPersonalModel(),
       intent.runtimeUnderMinutes ? getRuntimeCandidateItems(intent.runtimeUnderMinutes) : Promise.resolve(null),
+      intent.watchProvider ? getWatchProviderCandidateItems(intent.watchProvider.id, intent.mediaType) : Promise.resolve(null),
     ]);
 
     const [referencedRecommendations, recentItems] = await Promise.all([
@@ -105,13 +115,15 @@ export async function semanticSearchAction(_prevState: SemanticSearchState, form
       intent.recency ? getRecentCandidateItems(intent.mediaType) : Promise.resolve([]),
     ]);
 
-    // A runtime constraint can only be verified for movies sourced straight
-    // from TMDb's own runtime filter (see getRuntimeCandidateItems) — the
-    // general pool's list-endpoint items don't carry runtime data, so they'd
-    // either all get dropped by a post-hoc filter or, worse, let unverified
-    // titles through under a false "under N hours" claim.
-    let candidates = intent.runtimeUnderMinutes && runtimeItems
-      ? mergeUnique(referencedRecommendations, runtimeItems)
+    // A runtime or watch-provider constraint can only be verified for titles
+    // sourced straight from TMDb's own filters (see getRuntimeCandidateItems
+    // / getWatchProviderCandidateItems) — the general pool's list-endpoint
+    // items don't carry runtime or provider data, so they'd either all get
+    // dropped by a post-hoc filter or, worse, let unverified titles through
+    // under a false "under N hours" / "on Netflix" claim.
+    const verifiedSources = [runtimeItems, watchProviderItems].filter((source): source is MediaItem[] => source !== null);
+    let candidates = verifiedSources.length > 0
+      ? mergeUnique(referencedRecommendations, ...verifiedSources)
       : mergeUnique(referencedRecommendations, recentItems, basePool);
     if (referencedItem) candidates = candidates.filter((item) => mediaKey(item) !== mediaKey(referencedItem));
     if (intent.runtimeUnderMinutes) candidates = candidates.filter((item) => item.mediaType === "movie");
@@ -125,8 +137,21 @@ export async function semanticSearchAction(_prevState: SemanticSearchState, form
       const cutoffDate = cutoff.toISOString().slice(0, 10);
       candidates = candidates.filter((item) => item.releaseDate && item.releaseDate >= cutoffDate);
     }
+    if (intent.excludedGenres.length > 0) {
+      candidates = candidates.filter((item) => {
+        const genreNames = item.genres?.length ? item.genres : [item.genre];
+        return !intent.excludedGenres.some((excluded) => genreNames.some((name) => excluded.matcher.test(name)));
+      });
+    }
 
-    if (candidates.length === 0) return { status: "idle", results: [], appliedFilters: describeIntent(intent, referencedItem, personalTasteVector) };
+    if (candidates.length === 0) {
+      return {
+        status: "idle",
+        results: [],
+        noResults: true,
+        appliedFilters: describeIntent(intent, referencedItem, personalTasteVector),
+      };
+    }
 
     const [queryVector, referencedVector, candidateVectors, preferences] = await Promise.all([
       embedQuery(query),
@@ -148,6 +173,14 @@ export async function semanticSearchAction(_prevState: SemanticSearchState, form
       .sort((a, b) => (b.similarity + languagePreferenceBoost(b.item, preferences)) - (a.similarity + languagePreferenceBoost(a.item, preferences)));
 
     const weakMatch = (ranked[0]?.similarity ?? 0) < WEAK_MATCH_THRESHOLD;
+    if (weakMatch) {
+      return {
+        status: "idle",
+        results: [],
+        weakMatch: true,
+        appliedFilters: describeIntent(intent, referencedItem, personalTasteVector),
+      };
+    }
     const diversified = diversifyVibeResults(filterConfidentResults(ranked), RESULT_COUNT);
     // candidates (and so `ranked`) are sourced from list-endpoint MediaItem
     // cards that lack keywords/cast/runtime/certification — fine for
@@ -185,6 +218,8 @@ function describeIntent(intent: ReturnType<typeof parseSearchIntent>, referenced
   } else if (intent.mediaType) filters.push(intent.mediaType === "tv" ? "TV shows only" : "Movies only");
   if (intent.recency === "this-year") filters.push("Released this year");
   else if (intent.recency === "recent") filters.push("Recent releases");
+  if (intent.watchProvider) filters.push(`On ${intent.watchProvider.name}`);
+  for (const excluded of intent.excludedGenres) filters.push(`No ${excluded.label}`);
   if (intent.usePersonalHistory && personalTasteVector) filters.push("Based on your ratings");
   return filters.length > 0 ? filters : undefined;
 }

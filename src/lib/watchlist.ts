@@ -1,6 +1,6 @@
 import path from "path";
 import { readJsonFile, writeJsonFileAtomic } from "@/lib/local-json";
-import { findMovieByImdbId, findTvByImdbId, findTvParentByEpisodeImdbId, getTvShowName } from "@/lib/tmdb";
+import { getTvShowName, isEpisodeTitleType, mediaTypeFromTitleType, normalizedTitleType, resolveImdbTitle } from "@/lib/tmdb";
 import type { MediaType } from "@/types/tmdb";
 
 export type WatchlistStatus = "available" | "upcoming" | "metadata_pending";
@@ -127,27 +127,7 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-// Same title-type set as ratings.ts — the watchlist export uses the same
-// human-readable "Title Type" labels as the ratings export.
-const TV_TITLE_TYPES = new Set([
-  "tv series", "tv mini series", "tv special", "tv episode", "tv short",
-  "tvseries", "tvminiseries", "tvspecial", "tvepisode", "tvshort",
-]);
-
 const UNSUPPORTED_TITLE_TYPES = new Set(["video game", "videogame"]);
-const EPISODE_TITLE_TYPES = new Set(["tv episode", "tvepisode"]);
-
-function normalizedTitleType(titleType: string): string {
-  return titleType.trim().toLowerCase();
-}
-
-function mediaTypeFromTitleType(titleType: string): MediaType {
-  return TV_TITLE_TYPES.has(normalizedTitleType(titleType)) ? "tv" : "movie";
-}
-
-function isEpisodeTitleType(titleType: string): boolean {
-  return EPISODE_TITLE_TYPES.has(normalizedTitleType(titleType));
-}
 
 function isSupportedTitleType(titleType: string): boolean {
   return !UNSUPPORTED_TITLE_TYPES.has(normalizedTitleType(titleType));
@@ -209,14 +189,11 @@ export async function importCsv(text: string): Promise<WatchlistRow[]> {
     const imdbId = fields[imdbIdColumn];
     const sourceTitleType = fields[titleTypeColumn] || "";
     const resolvesEpisode = isEpisodeTitleType(sourceTitleType);
-    const mediaType = resolvesEpisode ? "tv" : mediaTypeFromTitleType(sourceTitleType);
-    const tmdbId = await (
-      resolvesEpisode
-        ? findTvParentByEpisodeImdbId(imdbId)
-        : mediaType === "tv" ? findTvByImdbId(imdbId) : findMovieByImdbId(imdbId)
-    ).catch(() => null);
+    const match = await resolveImdbTitle(imdbId, resolvesEpisode, mediaTypeFromTitleType(sourceTitleType) === "tv");
+    const tmdbId = match?.tmdbId ?? null;
+    const mediaType = match?.mediaType ?? mediaTypeFromTitleType(sourceTitleType);
     const sourceTitle = (titleColumn === -1 ? "" : fields[titleColumn]) || imdbId;
-    const title = resolvesEpisode && tmdbId !== null
+    const title = resolvesEpisode && mediaType === "tv" && tmdbId !== null
       ? await getTvShowName(tmdbId).catch(() => sourceTitle)
       : sourceTitle;
     const releaseDate = (releaseDateColumn === -1 ? "" : fields[releaseDateColumn]) || null;
