@@ -10,9 +10,24 @@
 
 # local environment files
 .env*
+!.env.example
+
+# imported user data (file-backed, single-user scaffold)
+/data/
 
 # TypeScript
 *.tsbuildinfo
 
 # debug
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# test output
+/coverage/
+/test-results/
+/playwright-report/
+
+# deployment and local tooling
+/.vercel/
